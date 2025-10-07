@@ -6,6 +6,8 @@ services:
     container_name: dfs-backend
     ports:
       - "8001:8000"   # <- change to 8001 on the HOST
+    volumes:
+      - ./backend/app:/app/app:ro   # mount your source into the container
     restart: unless-stopped
 
   frontend:
