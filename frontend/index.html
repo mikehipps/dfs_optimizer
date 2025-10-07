@@ -592,6 +592,13 @@
             const message = js?.error || `Solve failed (${resp.status})`;
             resetSolveUI();
             if (solveStatus) solveStatus.textContent = message;
+            if (js?.diagnostics) {
+              console.warn("Solve diagnostics", js.diagnostics);
+              const issues = Array.isArray(js.diagnostics.issues) ? js.diagnostics.issues : [];
+              if (issues.length && solveWarnings) {
+                solveWarnings.textContent = `Issues: ${issues.join("; ")}`;
+              }
+            }
             if (message) alert(message);
             return;
           }

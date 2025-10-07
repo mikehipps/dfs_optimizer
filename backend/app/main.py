@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 from typing import Optional, Dict, Any, List, Tuple
+from collections import Counter, defaultdict
 from uuid import uuid4
 from pathlib import Path
 import io, csv as csvmod, json, os, re
@@ -630,6 +631,63 @@ def _build_optimizer_player(data: Dict[str, Any]) -> Player:
     )
 
 
+def _diagnose_lineup_constraints(optimizer, players: List[Dict[str, Any]], locked: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Provide visibility into roster requirements versus the available pool."""
+
+    lineup_positions = getattr(getattr(optimizer, "settings", None), "positions", []) or []
+
+    position_counts: Counter[str] = Counter()
+    for player in players:
+        for pos in player.get("positions", []):
+            position_counts[pos] += 1
+
+    locked_counts: Counter[str] = Counter()
+    for player in locked:
+        for pos in player.get("positions", []):
+            locked_counts[pos] += 1
+
+    slot_map = defaultdict(lambda: {"name": None, "allowed": (), "required": 0})
+    for slot in lineup_positions:
+        allowed = tuple(slot.positions)
+        key = (slot.name, allowed)
+        entry = slot_map[key]
+        entry["name"] = slot.name
+        entry["allowed"] = allowed
+        entry["required"] += 1
+
+    slot_requirements: List[Dict[str, Any]] = []
+    issues: List[str] = []
+
+    for entry in slot_map.values():
+        allowed = entry["allowed"]
+        allowed_set = set(allowed)
+        eligible = sum(1 for player in players if allowed_set & set(player.get("positions", [])))
+        locked_for_slot = sum(1 for player in locked if allowed_set & set(player.get("positions", [])))
+
+        item = {
+            "name": entry["name"],
+            "allowed": list(allowed),
+            "required": entry["required"],
+            "eligible": eligible,
+            "locked": locked_for_slot,
+        }
+        slot_requirements.append(item)
+
+        if eligible < entry["required"]:
+            slot_name = entry["name"] or "/".join(allowed)
+            issues.append(f"Not enough eligible players for {slot_name}: need {entry['required']}, have {eligible}")
+        if locked_for_slot > entry["required"]:
+            slot_name = entry["name"] or "/".join(allowed)
+            issues.append(f"Too many locked players for {slot_name}: locked {locked_for_slot}, slots {entry['required']}")
+
+    return {
+        "position_counts": dict(position_counts),
+        "locked_counts": dict(locked_counts),
+        "slot_requirements": slot_requirements,
+        "issues": issues,
+    }
+
+
 @app.post("/solve")
 async def solve(request: SolveRequest):
     job_id = request.job_id
@@ -671,11 +729,34 @@ async def solve(request: SolveRequest):
 
     optimizer.load_players(optimizer_players)
 
+    diagnostics = _diagnose_lineup_constraints(optimizer, players_data, locked_data)
+    if diagnostics.get("issues"):
+        message = "; ".join(diagnostics["issues"])
+        return {
+            "ok": False,
+            "job_id": job_id,
+            "error": f"Lineup constraints invalid: {message}",
+            "warnings": warnings,
+            "stats": stats,
+            "diagnostics": diagnostics,
+        }
+
     locked_ids = {p["player_id"] for p in locked_data}
     for pdata in locked_data:
         player_obj = player_lookup.get(pdata["player_id"])
         if player_obj:
-            optimizer.add_player_to_lineup(player_obj)
+            try:
+                optimizer.add_player_to_lineup(player_obj)
+            except LineupOptimizerException as exc:
+                diagnostics = _diagnose_lineup_constraints(optimizer, players_data, locked_data)
+                return {
+                    "ok": False,
+                    "job_id": job_id,
+                    "error": str(exc),
+                    "warnings": warnings,
+                    "stats": stats,
+                    "diagnostics": diagnostics,
+                }
 
     requested = max(1, min(int(request.num_lineups or 1), 150))
 
@@ -712,28 +793,34 @@ async def solve(request: SolveRequest):
                 }
             )
     except GenerateLineupException as exc:
+        diagnostics = _diagnose_lineup_constraints(optimizer, players_data, locked_data)
         return {
             "ok": False,
             "job_id": job_id,
             "error": str(exc),
             "warnings": warnings,
             "stats": stats,
+            "diagnostics": diagnostics,
         }
     except LineupOptimizerException as exc:
+        diagnostics = _diagnose_lineup_constraints(optimizer, players_data, locked_data)
         return {
             "ok": False,
             "job_id": job_id,
             "error": str(exc),
             "warnings": warnings,
             "stats": stats,
+            "diagnostics": diagnostics,
         }
     except Exception as exc:
+        diagnostics = _diagnose_lineup_constraints(optimizer, players_data, locked_data)
         return {
             "ok": False,
             "job_id": job_id,
             "error": f"Solver error: {exc}",
             "warnings": warnings,
             "stats": stats,
+            "diagnostics": diagnostics,
         }
 
     if not lineups:
