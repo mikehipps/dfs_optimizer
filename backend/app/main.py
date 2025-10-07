@@ -221,6 +221,18 @@ def _csv_float_or_empty(v: Any) -> str:
         return ""
 
 
+def _projection_is_zero(value: Any) -> bool:
+    if value is None:
+        return False
+    s = str(value).strip()
+    if not s:
+        return False
+    try:
+        return float(s) == 0.0
+    except Exception:
+        return False
+
+
 @app.get("/jobs/{job_id}/pool")
 def get_pool(job_id: str):
     job_dir = DATA_DIR / "jobs" / job_id
@@ -231,6 +243,39 @@ def get_pool(job_id: str):
     with pool_csv.open("r", encoding="utf-8", newline="") as f:
         reader = csvmod.DictReader(f)
         rows = list(reader)
+        headers = reader.fieldnames or []
+
+    default_cols = ["active", "lock", "exclude", "max_exposure", "min_exposure"]
+    for col in default_cols:
+        if col not in headers:
+            headers.append(col)
+
+    for row in rows:
+        # normalize truthy flags and ensure defaults when missing/blank
+        active_val = row.get("active")
+        if active_val is None or str(active_val).strip() == "":
+            row["active"] = "true"
+        else:
+            row["active"] = _csv_bool_to_str(active_val)
+
+        lock_val = row.get("lock")
+        if lock_val is None or str(lock_val).strip() == "":
+            row["lock"] = "false"
+        else:
+            row["lock"] = _csv_bool_to_str(lock_val)
+
+        exclude_val = row.get("exclude")
+        if exclude_val is None or str(exclude_val).strip() == "":
+            row["exclude"] = "true" if _projection_is_zero(row.get("projection")) else "false"
+        else:
+            row["exclude"] = _csv_bool_to_str(exclude_val)
+
+        for exposure_key in ("max_exposure", "min_exposure"):
+            exposure_val = row.get(exposure_key)
+            if exposure_val is None or str(exposure_val).strip() == "":
+                row[exposure_key] = ""
+            else:
+                row[exposure_key] = _csv_float_or_empty(exposure_val)
 
     return {"players": rows, "count": len(rows)}
 

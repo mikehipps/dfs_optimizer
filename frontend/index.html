@@ -14,6 +14,7 @@
     .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
     .muted { color:#666; }
     pre { background:#f8f8f8; padding:10px; border-radius:8px; overflow:auto; }
+    details summary { cursor:pointer; font-weight:600; }
   </style>
 </head>
 <body>
@@ -60,7 +61,12 @@
     </div>
   </div>
 
-  <pre id="outOptimize"></pre>
+  <div id="optimizeOutput" style="margin:10px 0;">
+    <details id="optimizeDetails">
+      <summary>Optimize response (click to expand)</summary>
+      <pre id="outOptimize" style="max-height:240px;"></pre>
+    </details>
+  </div>
   <div id="poolControls" style="display:none; margin:10px 0;">
     <button id="btnLoadPool">Preview Player Pool</button>
     <button id="btnSavePool" disabled>Save changes</button>
@@ -115,6 +121,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const mappingForm = document.getElementById("mappingForm");
   const mappingGrid = document.getElementById("mappingGrid");
   const outOptimize = document.getElementById("outOptimize");
+  const optimizeDetails = document.getElementById("optimizeDetails");
   const poolControls = document.getElementById("poolControls");
   const poolMeta = document.getElementById("poolMeta");
   const poolTableWrap = document.getElementById("poolTableWrap");
@@ -128,13 +135,25 @@ document.addEventListener("DOMContentLoaded", () => {
     "confirmed_starter","progressive_scale"
   ];
 
+  const POOL_COLUMNS = [
+    "player_id","name","team","position","salary","projection",
+    "active","lock","exclude","max_exposure","min_exposure"
+  ];
+  const NUMERIC_POOL_COLUMNS = new Set(["salary","projection","max_exposure","min_exposure"]);
+  const BOOL_POOL_COLUMNS = new Set(["active","lock","exclude"]);
+
   let lastJobId = null;
   let poolCache = [];
+  let poolView = [];
   const poolDirty = new Map();
+  const sortState = { key: null, dir: "asc" };
 
   function resetPoolUI(){
     poolDirty.clear();
     btnSavePool.disabled = true;
+    sortState.key = null;
+    sortState.dir = "asc";
+    poolView = [];
   }
 
   function onOptimizeResponse(json){
@@ -146,6 +165,7 @@ document.addEventListener("DOMContentLoaded", () => {
     poolTableWrap.innerHTML = "";
     resetPoolUI();
     poolCache = [];
+    optimizeDetails.open = false;
   }
 
   function printOptimize(json){
@@ -171,7 +191,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const shown = Math.min(poolCache.length, 200);
     poolMeta.textContent = shown < total ? `rows: ${total} (showing ${shown})` : `rows: ${total}`;
     resetPoolUI();
-    renderPoolTable(poolCache.slice(0, 200));
+    poolView = [...poolCache];
+    renderPoolTable(poolView.slice(0, 200));
   }
 
   function renderPoolTable(rows){
@@ -185,8 +206,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const escapeAttr = (value) => escapeHtml(value).replace(/"/g, "&quot;");
 
-    const cols = ["player_id","name","team","position","salary","projection","active","lock","exclude","max_exposure","min_exposure"];
-    const thead = `<thead><tr>${cols.map(c=>`<th style="position:sticky;top:0;background:#fafafa">${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
+    const thead = `<thead><tr>${POOL_COLUMNS.map(col=>{
+      const label = `${escapeHtml(col)}${sortState.key === col ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}`;
+      return `<th data-key="${escapeAttr(col)}" style="position:sticky;top:0;background:#fafafa">${label}</th>`;
+    }).join("")}</tr></thead>`;
     const body = rows.map(row=>{
       const pid = row.player_id;
       const pidAttr = escapeAttr(pid);
@@ -201,10 +224,20 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return `<td>${escapeHtml(rawVal)}</td>`;
       };
-      return `<tr>${cols.map(cell).join("")}</tr>`;
+      return `<tr>${POOL_COLUMNS.map(cell).join("")}</tr>`;
     }).join("");
 
     wrap.innerHTML = `<table style="border-collapse:collapse;width:100%">${thead}<tbody>${body}</tbody></table>`;
+
+    wrap.querySelectorAll("th[data-key]").forEach(th=>{
+      th.style.cursor = "pointer";
+      th.addEventListener("click", ()=>{
+        const key = th.dataset.key;
+        if(key){
+          applySort(key);
+        }
+      });
+    });
 
     wrap.querySelectorAll('input[type="text"]').forEach(inp=>{
       inp.addEventListener("change", (event)=>{
@@ -229,6 +262,61 @@ document.addEventListener("DOMContentLoaded", () => {
         btnSavePool.disabled = false;
       });
     });
+  }
+
+  function parseNumeric(value){
+    if(value === undefined || value === null){
+      return null;
+    }
+    const str = String(value).trim();
+    if(!str){
+      return null;
+    }
+    const num = Number(str.replace(/,/g, ""));
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function compareRows(a, b, key){
+    if(NUMERIC_POOL_COLUMNS.has(key)){
+      const av = parseNumeric(a[key]);
+      const bv = parseNumeric(b[key]);
+      if(av === null && bv === null) return 0;
+      if(av === null) return 1;
+      if(bv === null) return -1;
+      return av - bv;
+    }
+    if(BOOL_POOL_COLUMNS.has(key)){
+      const av = String(a[key]).toLowerCase() === "true" ? 1 : 0;
+      const bv = String(b[key]).toLowerCase() === "true" ? 1 : 0;
+      return av - bv;
+    }
+    const av = String(a[key] ?? "").toLowerCase();
+    const bv = String(b[key] ?? "").toLowerCase();
+    if(av < bv) return -1;
+    if(av > bv) return 1;
+    return 0;
+  }
+
+  function applySort(key){
+    if(!key){
+      return;
+    }
+    if(sortState.key === key){
+      sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+    } else {
+      sortState.key = key;
+      sortState.dir = "asc";
+    }
+
+    poolView = [...poolCache];
+    if(sortState.key){
+      poolView.sort((a, b)=>{
+        const cmp = compareRows(a, b, sortState.key);
+        return sortState.dir === "asc" ? cmp : -cmp;
+      });
+    }
+
+    renderPoolTable(poolView.slice(0, 200));
   }
 
   btnLoadPool.onclick = loadPool;
@@ -338,6 +426,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btnSaveTpl.disabled = false;
       btnLoadTpl.disabled = false;
       outOptimize.textContent = JSON.stringify(js.csv_summary, null, 2);
+      optimizeDetails.open = false;
     }catch(e){ alert(e.message); }
   };
 
