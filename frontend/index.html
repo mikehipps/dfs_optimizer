@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DFS Optimizer UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 12px; }
+    fieldset { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
+    legend { padding: 0 6px; }
+    label { display:inline-block; margin:6px 12px 6px 0; }
+    input, select, button { padding:6px 8px; margin: 4px 8px; }
+    .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+    .muted { color:#666; }
+    pre { background:#f8f8f8; padding:10px; border-radius:8px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h1>DFS Optimizer (placeholder)</h1>
+  <p class="muted">Backend: FastAPI + pydfs + CBC (python-mip). Use this page to hit /health or send a CSV to /optimize.</p>
+
+  <fieldset>
+    <legend>Health Check</legend>
+    <button id="btnHealth">GET /health</button>
+    <pre id="outHealth"></pre>
+  </fieldset>
+
+  <fieldset>
+    <legend>Upload CSV & Optimize (echo test)</legend>
+    <div class="row">
+      <label>CSV: <input type="file" id="csvFile" accept=".csv" /></label>
+      <label>Site:
+        <select id="site">
+          <option>FANDUEL</option>
+          <option>DRAFTKINGS</option>
+        </select>
+      </label>
+      <label>Sport:
+        <select id="sport">
+          <option>NFL</option>
+          <option>NBA</option>
+          <option>MLB</option>
+          <option>NHL</option>
+        </select>
+      </label>
+      <label>Solver:
+        <select id="solver">
+          <option>mip</option>
+          <option>pulp</option>
+        </select>
+      </label>
+      <label>Pool size: <input type="number" id="poolSize" value="150" min="1" /></label>
+    </div>
+    <button id="btnSend">POST /optimize</button>
+    <pre id="outOptimize"></pre>
+  </fieldset>
+
+  <script>
+    const API = location.hostname === "localhost" ? "http://localhost:8000" : "/api"; // adjust if reverse-proxy later
+
+    document.getElementById("btnHealth").onclick = async () => {
+      const r = await fetch(`${API}/health`);
+      document.getElementById("outHealth").textContent = JSON.stringify(await r.json(), null, 2);
+    };
+
+    document.getElementById("btnSend").onclick = async () => {
+      const f = document.getElementById("csvFile").files[0];
+      if (!f) { alert("Pick a CSV"); return; }
+      const settings = {
+        site: document.getElementById("site").value,
+        sport: document.getElementById("sport").value,
+        solver: document.getElementById("solver").value,
+        pool_size: parseInt(document.getElementById("poolSize").value, 10) || 150,
+        params: {}
+      };
+      const fd = new FormData();
+      fd.append("settings", JSON.stringify(settings));
+      fd.append("csv", f);
+      const r = await fetch(`${API}/optimize`, { method: "POST", body: fd });
+      const json = await r.json().catch(() => ({ error: "non-JSON response" }));
+      document.getElementById("outOptimize").textContent = JSON.stringify(json, null, 2);
+    };
+  </script>
+</body>
+</html>
