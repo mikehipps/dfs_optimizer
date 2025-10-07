@@ -130,7 +130,7 @@ def _normalize_rows(rows: List[Dict[str, Any]], mapping: Dict[str, str]) -> Dict
 @app.post("/optimize")
 async def optimize(
     settings: str = Form(...),
-    file: UploadFile = File(...),
+    file: UploadFile = File(..., alias="csv"),
     mapping: Optional[str] = Form(None),
 ):
     raw = await file.read()
