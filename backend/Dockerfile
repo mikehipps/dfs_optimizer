@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Python deps
 WORKDIR /app
 COPY backend/requirements.txt /app/requirements.txt
+
+RUN python -m pip install --upgrade pip
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # App code

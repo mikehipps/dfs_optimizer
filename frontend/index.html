@@ -57,7 +57,7 @@
   </fieldset>
 
   <script>
-    const API = location.hostname === "localhost" ? "http://localhost:8000" : "/api"; // adjust if reverse-proxy later
+    const API = "/api"; // adjust if reverse-proxy later
 
     document.getElementById("btnHealth").onclick = async () => {
       const r = await fetch(`${API}/health`);
