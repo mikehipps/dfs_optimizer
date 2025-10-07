@@ -4,7 +4,11 @@ from pydantic import BaseModel, ValidationError
 from typing import Optional, Dict, Any, List, Tuple
 from uuid import uuid4
 from pathlib import Path
-import io, csv as csvmod, json, os
+import io, csv as csvmod, json, os, re
+
+from pydfs_lineup_optimizer import get_optimizer
+from pydfs_lineup_optimizer.player import Player
+from pydfs_lineup_optimizer.exceptions import LineupOptimizerException, GenerateLineupException
 
 DATA_DIR = Path("/app/data")  # added near the top of the file is fine
 
@@ -24,6 +28,14 @@ class OptimizeRequest(BaseModel):
     solver: str = "mip"
     pool_size: int = 150
     params: Dict[str, Any] = {}
+
+
+class SolveRequest(BaseModel):
+    job_id: str
+    num_lineups: int = 20
+    site: str = "FANDUEL"
+    sport: str = "NFL"
+    solver: str = "mip"
 
 @app.get("/health")
 def health():
@@ -233,6 +245,203 @@ def _projection_is_zero(value: Any) -> bool:
         return False
 
 
+def _parse_positions(value: Any) -> List[str]:
+    if value is None:
+        return []
+    text = str(value).replace("D/ST", "DST")
+    parts = re.split(r"[/,;]+", text)
+    positions = [p.strip().upper() for p in parts if p and p.strip()]
+    return positions
+
+
+def _split_name(full_name: str) -> Tuple[str, str]:
+    bits = full_name.split()
+    if not bits:
+        return "", ""
+    if len(bits) == 1:
+        return bits[0], ""
+    return bits[0], " ".join(bits[1:])
+
+
+def _parse_percentish(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("%"):
+        text = text[:-1]
+    try:
+        num = float(text)
+    except Exception:
+        return None
+    if num < 0:
+        num = 0.0
+    if num > 1.0:
+        if num <= 100.0:
+            num = num / 100.0
+        else:
+            num = 1.0
+    return num
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return _to_float(text)
+
+
+def _optional_bool(value: Any) -> Optional[bool]:
+    result = _to_bool(value)
+    return result
+
+
+def _read_pool_rows(job_id: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    job_dir = DATA_DIR / "jobs" / job_id
+    pool_csv = job_dir / "pool_input.csv"
+    if not pool_csv.exists():
+        raise FileNotFoundError("pool_input.csv not found")
+
+    with pool_csv.open("r", encoding="utf-8", newline="") as f:
+        reader = csvmod.DictReader(f)
+        rows = list(reader)
+        headers = reader.fieldnames or []
+    return rows, headers
+
+
+def _coerce_pool_player(row: Dict[str, Any], index: int) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    errors: List[str] = []
+    projection_val = row.get("projection")
+    projection = _to_float(projection_val)
+    salary = _to_int(row.get("salary"))
+
+    exclude_raw = row.get("exclude")
+    active_raw = row.get("active")
+    lock_raw = row.get("lock")
+
+    exclude = _optional_bool(exclude_raw)
+    if exclude is None:
+        exclude = _projection_is_zero(projection_val)
+
+    active = _optional_bool(active_raw)
+    if active is None:
+        active = not exclude
+
+    lock = bool(_optional_bool(lock_raw) or False)
+
+    if exclude:
+        active = False
+
+    if lock and exclude:
+        errors.append("player is both locked and excluded")
+
+    if lock and not active:
+        # lock should imply active participation
+        errors.append("locked player is marked inactive")
+
+    player_id = str(row.get("player_id") or "").strip()
+    if not player_id:
+        errors.append("missing player_id")
+
+    name = str(row.get("name") or "").strip()
+    if not name:
+        errors.append("missing name")
+
+    team = str(row.get("team") or "").strip()
+
+    positions = _parse_positions(row.get("position"))
+    if not positions:
+        errors.append("missing position")
+
+    if salary is None:
+        errors.append("invalid salary")
+
+    if projection is None:
+        errors.append("invalid projection")
+
+    max_exposure = _parse_percentish(row.get("max_exposure"))
+    min_exposure = _parse_percentish(row.get("min_exposure"))
+    if max_exposure is not None and min_exposure is not None and min_exposure > max_exposure:
+        errors.append("min_exposure greater than max_exposure")
+
+    projected_ownership = _parse_percentish(row.get("projected_ownership"))
+    min_deviation = _optional_float(row.get("min_deviation"))
+    max_deviation = _optional_float(row.get("max_deviation"))
+    projection_floor = _optional_float(row.get("projection_floor"))
+    projection_ceil = _optional_float(row.get("projection_ceil"))
+    progressive_scale = _optional_float(row.get("progressive_scale"))
+    confirmed_starter = _optional_bool(row.get("confirmed_starter"))
+
+    include = (active and not exclude) or lock
+
+    first_name, last_name = _split_name(name)
+
+    if errors:
+        return None, errors
+
+    player = {
+        "player_id": player_id,
+        "first_name": first_name or name,
+        "last_name": last_name,
+        "full_name": name,
+        "team": team,
+        "positions": positions,
+        "salary": salary,
+        "projection": projection,
+        "lock": lock,
+        "active": active,
+        "exclude": exclude,
+        "include": include,
+        "max_exposure": max_exposure,
+        "min_exposure": min_exposure,
+        "projected_ownership": projected_ownership,
+        "min_deviation": min_deviation,
+        "max_deviation": max_deviation,
+        "projection_floor": projection_floor,
+        "projection_ceil": projection_ceil,
+        "progressive_scale": progressive_scale,
+        "confirmed_starter": confirmed_starter,
+        "row_index": index,
+    }
+    return player, []
+
+
+def _prepare_players_for_solver(job_id: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str], Dict[str, int]]:
+    rows, _ = _read_pool_rows(job_id)
+    players: List[Dict[str, Any]] = []
+    locked: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    stats = {
+        "total_rows": len(rows),
+        "eligible": 0,
+        "skipped_inactive": 0,
+    }
+
+    for idx, row in enumerate(rows, start=2):
+        player, errors = _coerce_pool_player(row, idx)
+        if errors:
+            lock_flag = bool(_optional_bool(row.get("lock")))
+            message = f"Row {idx}: {', '.join(errors)}"
+            if lock_flag:
+                raise ValueError(message)
+            warnings.append(message)
+            continue
+
+        if not player["include"]:
+            stats["skipped_inactive"] += 1
+            continue
+
+        players.append(player)
+        stats["eligible"] += 1
+        if player["lock"]:
+            locked.append(player)
+
+    return players, locked, warnings, stats
+
+
 @app.get("/jobs/{job_id}/pool")
 def get_pool(job_id: str):
     job_dir = DATA_DIR / "jobs" / job_id
@@ -372,3 +581,219 @@ async def update_pool(job_id: str, body: Dict[str, Any]):
             writer.writerow(row)
 
     return {"ok": True, "changed": changed, "count": len(current_rows)}
+
+
+SPORT_ALIASES = {
+    "NFL": "FOOTBALL",
+    "NCAAF": "COLLEGE_FOOTBALL",
+    "CFL": "CANADIAN_FOOTBALL",
+    "NBA": "BASKETBALL",
+    "WNBA": "WNBA",
+    "MLB": "BASEBALL",
+    "NHL": "HOCKEY",
+    "LOL": "LEAGUE_OF_LEGENDS",
+}
+
+
+ALLOWED_SOLVERS = {"mip", "pulp"}
+
+
+def _resolve_sport(value: str) -> str:
+    key = (value or "").upper()
+    return SPORT_ALIASES.get(key, key)
+
+
+def _build_optimizer_player(data: Dict[str, Any]) -> Player:
+    return Player(
+        player_id=data["player_id"],
+        first_name=data["first_name"],
+        last_name=data["last_name"],
+        positions=data["positions"],
+        team=data["team"],
+        salary=float(data["salary"]),
+        fppg=float(data["projection"]),
+        max_exposure=data["max_exposure"],
+        min_exposure=data["min_exposure"],
+        projected_ownership=data["projected_ownership"],
+        min_deviation=data["min_deviation"],
+        max_deviation=data["max_deviation"],
+        is_confirmed_starter=data["confirmed_starter"],
+        fppg_floor=data["projection_floor"],
+        fppg_ceil=data["projection_ceil"],
+        progressive_scale=data["progressive_scale"],
+        original_positions=data["positions"],
+    )
+
+
+@app.post("/solve")
+async def solve(request: SolveRequest):
+    job_id = request.job_id
+    try:
+        players_data, locked_data, warnings, stats = _prepare_players_for_solver(job_id)
+    except FileNotFoundError:
+        return {"ok": False, "error": "pool_input.csv not found", "job_id": job_id}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "job_id": job_id}
+
+    if not players_data:
+        return {
+            "ok": False,
+            "job_id": job_id,
+            "error": "No eligible players after applying active/exclude flags.",
+            "warnings": warnings,
+            "stats": stats,
+        }
+
+    solver_key = (request.solver or "mip").lower()
+    if solver_key not in ALLOWED_SOLVERS:
+        return {"ok": False, "job_id": job_id, "error": f"Unsupported solver '{request.solver}'"}
+
+    site_key = (request.site or "FANDUEL").upper()
+    sport_key = _resolve_sport(request.sport)
+
+    try:
+        optimizer = get_optimizer(site_key, sport_key, solver=solver_key)
+    except Exception as exc:
+        return {"ok": False, "job_id": job_id, "error": f"Failed to initialize optimizer: {exc}"}
+
+    optimizer_players: List[Player] = []
+    player_lookup: Dict[str, Player] = {}
+    for pdata in players_data:
+        player_obj = _build_optimizer_player(pdata)
+        optimizer_players.append(player_obj)
+        player_lookup[pdata["player_id"]] = player_obj
+
+    optimizer.load_players(optimizer_players)
+
+    locked_ids = {p["player_id"] for p in locked_data}
+    for pdata in locked_data:
+        player_obj = player_lookup.get(pdata["player_id"])
+        if player_obj:
+            optimizer.add_player_to_lineup(player_obj)
+
+    requested = max(1, min(int(request.num_lineups or 1), 150))
+
+    lineups: List[Dict[str, Any]] = []
+    job_dir = DATA_DIR / "jobs" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    lineups_path = job_dir / "lineups.csv"
+
+    try:
+        for idx, lineup in enumerate(optimizer.optimize(requested), start=1):
+            lineup_players: List[Dict[str, Any]] = []
+            for lp in lineup.lineup:
+                lineup_players.append(
+                    {
+                        "player_id": lp.id,
+                        "name": lp.full_name,
+                        "team": lp.team,
+                        "positions": list(lp.positions),
+                        "lineup_position": lp.lineup_position,
+                        "salary": int(lp.salary),
+                        "projection": round(float(lp.fppg), 3),
+                        "used_projection": round(float(lp.used_fppg), 3) if lp.used_fppg is not None else None,
+                        "locked": lp.id in locked_ids,
+                    }
+                )
+
+            lineups.append(
+                {
+                    "index": idx,
+                    "salary": int(lineup.salary_costs),
+                    "projection": round(float(lineup.fantasy_points_projection), 3),
+                    "projection_actual": round(float(lineup.actual_fantasy_points_projection), 3),
+                    "players": lineup_players,
+                }
+            )
+    except GenerateLineupException as exc:
+        return {
+            "ok": False,
+            "job_id": job_id,
+            "error": str(exc),
+            "warnings": warnings,
+            "stats": stats,
+        }
+    except LineupOptimizerException as exc:
+        return {
+            "ok": False,
+            "job_id": job_id,
+            "error": str(exc),
+            "warnings": warnings,
+            "stats": stats,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "job_id": job_id,
+            "error": f"Solver error: {exc}",
+            "warnings": warnings,
+            "stats": stats,
+        }
+
+    if not lineups:
+        return {
+            "ok": False,
+            "job_id": job_id,
+            "error": "Solver did not return any lineups.",
+            "warnings": warnings,
+            "stats": stats,
+        }
+
+    csv_headers = [
+        "lineup_index",
+        "lineup_salary",
+        "lineup_projection",
+        "lineup_projection_actual",
+        "slot",
+        "player_id",
+        "name",
+        "team",
+        "positions",
+        "salary",
+        "projection",
+        "used_projection",
+        "locked",
+    ]
+
+    with lineups_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csvmod.DictWriter(f, fieldnames=csv_headers)
+        writer.writeheader()
+        for lineup in lineups:
+            for player in lineup["players"]:
+                writer.writerow(
+                    {
+                        "lineup_index": lineup["index"],
+                        "lineup_salary": lineup["salary"],
+                        "lineup_projection": lineup["projection"],
+                        "lineup_projection_actual": lineup["projection_actual"],
+                        "slot": player["lineup_position"],
+                        "player_id": player["player_id"],
+                        "name": player["name"],
+                        "team": player["team"],
+                        "positions": "/".join(player["positions"]),
+                        "salary": player["salary"],
+                        "projection": player["projection"],
+                        "used_projection": player["used_projection"] if player["used_projection"] is not None else "",
+                        "locked": "true" if player["locked"] else "false",
+                    }
+                )
+
+    preview = lineups[:3]
+    response = {
+        "ok": True,
+        "job_id": job_id,
+        "requested": requested,
+        "generated": len(lineups),
+        "lineups": preview,
+        "lineups_csv": f"jobs/{job_id}/lineups.csv",
+        "warnings": warnings,
+        "stats": stats,
+        "solver": solver_key,
+        "site": site_key,
+        "sport": sport_key,
+        "locked_players": len(locked_data),
+    }
+    if len(lineups) > len(preview):
+        response["preview_count"] = len(preview)
+
+    return response

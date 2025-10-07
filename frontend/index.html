@@ -115,6 +115,34 @@
       border: 1px solid var(--border-color);
     }
 
+    .lineup-card {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px;
+      margin: 10px 0;
+      background: var(--panel-bg);
+    }
+
+    .lineup-card h4 {
+      margin: 0 0 6px;
+    }
+
+    .lineup-meta {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .lineup-card table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .lineup-card th,
+    .lineup-card td {
+      border: 1px solid var(--border-color);
+      padding: 6px;
+    }
+
     .top-meta {
       justify-content: space-between;
       align-items: center;
@@ -187,6 +215,20 @@
     <div id="poolTableWrap" style="max-height:400px; overflow:auto; display:none;"></div>
   </fieldset>
 
+  <fieldset id="solvePanel" style="display:none;">
+    <legend>Solve Lineups</legend>
+    <div class="row">
+      <label>Lineups to generate: <input type="number" id="solveCount" value="20" min="1" max="150" /></label>
+      <button id="btnSolve">Solve lineups</button>
+      <span id="solveStatus" class="muted"></span>
+    </div>
+    <div id="solveWarnings" class="muted" style="margin:6px 0;"></div>
+    <div id="solveResults" style="display:none;">
+      <h3 style="margin-top:0;">Sample lineups</h3>
+      <div id="solveLineups"></div>
+    </div>
+  </fieldset>
+
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       const API = "/api";
@@ -214,6 +256,13 @@
       const poolTableWrap = document.getElementById("poolTableWrap");
       const btnLoadPool = document.getElementById("btnLoadPool");
       const btnSavePool = document.getElementById("btnSavePool");
+      const solvePanel = document.getElementById("solvePanel");
+      const solveCount = document.getElementById("solveCount");
+      const btnSolve = document.getElementById("btnSolve");
+      const solveStatus = document.getElementById("solveStatus");
+      const solveResults = document.getElementById("solveResults");
+      const solveLineups = document.getElementById("solveLineups");
+      const solveWarnings = document.getElementById("solveWarnings");
 
       const REQUIRED_KEYS = ["player_id","name","team","position","salary","projection"];
       const OPTIONAL_KEYS = [
@@ -236,6 +285,9 @@
       const poolIndex = new Map();
       const sortState = { key: null, dir: "asc" };
 
+      const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const escapeAttr = (value) => escapeHtml(value).replace(/"/g, "&quot;");
+
       btnHealth?.addEventListener("click", async () => {
         try {
           const resp = await fetch(`${API}/health`);
@@ -255,6 +307,13 @@
         poolIndex.clear();
       }
 
+      function resetSolveUI() {
+        if (solveStatus) solveStatus.textContent = "";
+        if (solveWarnings) solveWarnings.textContent = "";
+        if (solveLineups) solveLineups.innerHTML = "";
+        if (solveResults) solveResults.style.display = "none";
+      }
+
       function onOptimizeResponse(json) {
         outOptimize.textContent = JSON.stringify(json, null, 2);
         lastJobId = json?.job?.job_id || null;
@@ -263,6 +322,10 @@
         poolTableWrap.style.display = "none";
         poolTableWrap.innerHTML = "";
         resetPoolUI();
+        resetSolveUI();
+        if (solvePanel) {
+          solvePanel.style.display = lastJobId ? "block" : "none";
+        }
         poolCache = [];
         if (optimizeDetails) {
           optimizeDetails.open = false;
@@ -324,9 +387,6 @@
           poolTableWrap.innerHTML = "<i>No rows.</i>";
           return;
         }
-
-        const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const escapeAttr = (value) => escapeHtml(value).replace(/"/g, "&quot;");
 
         const thead = `<thead><tr>${POOL_COLUMNS.map((col) => {
           const label = `${escapeHtml(col)}${sortState.key === col ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}`;
@@ -465,6 +525,100 @@
           alert(`Saved ${js.changed} rows.`);
         } catch (err) {
           alert(err?.message || "Save failed");
+        }
+      });
+
+      function renderLineupPreview(lineups) {
+        if (!solveLineups) {
+          return;
+        }
+        if (!Array.isArray(lineups) || !lineups.length) {
+          solveLineups.innerHTML = "<i>No sample lineups.</i>";
+          if (solveResults) solveResults.style.display = "block";
+          return;
+        }
+
+        const html = lineups.map((lineup) => {
+          const meta = `Lineup ${escapeHtml(lineup.index)} · Salary ${escapeHtml(lineup.salary)} · Projection ${escapeHtml(lineup.projection)}`;
+          const rows = (lineup.players || []).map((player) => {
+            const positions = Array.isArray(player.positions) ? player.positions.join("/") : player.positions;
+            return `<tr>` +
+              `<td>${escapeHtml(player.lineup_position)}</td>` +
+              `<td>${escapeHtml(player.name)}</td>` +
+              `<td>${escapeHtml(positions)}</td>` +
+              `<td>${escapeHtml(player.team)}</td>` +
+              `<td style="text-align:right">${escapeHtml(player.salary)}</td>` +
+              `<td style="text-align:right">${escapeHtml(player.projection)}</td>` +
+              `<td>${player.locked ? "✅" : ""}</td>` +
+            `</tr>`;
+          }).join("");
+          const table = `<table><thead><tr>` +
+            `<th>Slot</th><th>Name</th><th>Pos</th><th>Team</th><th>Salary</th><th>Proj</th><th>Lock</th>` +
+            `</tr></thead><tbody>${rows}</tbody></table>`;
+          return `<div class="lineup-card"><div class="lineup-meta">${meta}</div>${table}</div>`;
+        }).join("");
+
+        solveLineups.innerHTML = html;
+        if (solveResults) solveResults.style.display = "block";
+      }
+
+      btnSolve?.addEventListener("click", async () => {
+        if (!lastJobId) {
+          alert("No job available. Run Optimize first.");
+          return;
+        }
+        const requested = parseInt(solveCount?.value ?? "20", 10) || 20;
+        const payload = {
+          job_id: lastJobId,
+          num_lineups: requested,
+          site: site.value,
+          sport: sport.value,
+          solver: solver.value
+        };
+
+        if (solveStatus) solveStatus.textContent = "Solving...";
+        if (solveWarnings) solveWarnings.textContent = "";
+        if (solveLineups) solveLineups.innerHTML = "";
+        if (solveResults) solveResults.style.display = "none";
+        btnSolve.disabled = true;
+        try {
+          const resp = await fetch(`${API}/solve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const js = await resp.json().catch(() => ({ ok: false, error: "Invalid JSON response" }));
+          if (!resp.ok || !js.ok) {
+            const message = js?.error || `Solve failed (${resp.status})`;
+            resetSolveUI();
+            if (solveStatus) solveStatus.textContent = message;
+            if (message) alert(message);
+            return;
+          }
+          const summaryBits = [];
+          summaryBits.push(`Generated ${js.generated} lineups`);
+          if (js.requested && js.requested !== js.generated) {
+            summaryBits.push(`requested ${js.requested}`);
+          }
+          if (js.lineups_csv) {
+            summaryBits.push(`saved to ${js.lineups_csv}`);
+          }
+          if (js.stats) {
+            const eligible = js.stats.eligible ?? 0;
+            const total = js.stats.total_rows ?? 0;
+            summaryBits.push(`eligible players ${eligible}/${total}`);
+          }
+          if (solveStatus) solveStatus.textContent = summaryBits.join(" • ");
+          if (Array.isArray(js.warnings) && js.warnings.length && solveWarnings) {
+            solveWarnings.textContent = `Warnings: ${js.warnings.join("; ")}`;
+          }
+          renderLineupPreview(js.lineups || []);
+        } catch (err) {
+          const message = err?.message || "Solve failed";
+          if (solveStatus) solveStatus.textContent = message;
+          alert(message);
+        } finally {
+          btnSolve.disabled = false;
         }
       });
 
