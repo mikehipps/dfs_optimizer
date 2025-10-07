@@ -9,6 +9,8 @@ import io, csv as csvmod, json, os, re
 from pydfs_lineup_optimizer import get_optimizer
 from pydfs_lineup_optimizer.player import Player
 from pydfs_lineup_optimizer.exceptions import LineupOptimizerException, GenerateLineupException
+from pydfs_lineup_optimizer.solvers.mip_solver import MIPSolver
+from pydfs_lineup_optimizer.solvers.pulp_solver import PuLPSolver
 
 DATA_DIR = Path("/app/data")  # added near the top of the file is fine
 
@@ -595,7 +597,10 @@ SPORT_ALIASES = {
 }
 
 
-ALLOWED_SOLVERS = {"mip", "pulp"}
+ALLOWED_SOLVERS = {
+    "mip": MIPSolver,
+    "pulp": PuLPSolver,
+}
 
 
 def _resolve_sport(value: str) -> str:
@@ -645,14 +650,15 @@ async def solve(request: SolveRequest):
         }
 
     solver_key = (request.solver or "mip").lower()
-    if solver_key not in ALLOWED_SOLVERS:
+    solver_cls = ALLOWED_SOLVERS.get(solver_key)
+    if solver_cls is None:
         return {"ok": False, "job_id": job_id, "error": f"Unsupported solver '{request.solver}'"}
 
     site_key = (request.site or "FANDUEL").upper()
     sport_key = _resolve_sport(request.sport)
 
     try:
-        optimizer = get_optimizer(site_key, sport_key, solver=solver_key)
+        optimizer = get_optimizer(site_key, sport_key, solver=solver_cls)
     except Exception as exc:
         return {"ok": False, "job_id": job_id, "error": f"Failed to initialize optimizer: {exc}"}
 
