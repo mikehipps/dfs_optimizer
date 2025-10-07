@@ -1,16 +1,14 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import io, csv, json
 
-# from pydfs_lineup_optimizer import get_optimizer, Site, Sport  # used later
-
-app = FastAPI(title="DFS Optimizer API", version="0.1.0")
+app = FastAPI(title="DFS Optimizer API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,7 +17,7 @@ app.add_middleware(
 class OptimizeRequest(BaseModel):
     site: str = "FANDUEL"
     sport: str = "NFL"
-    solver: str = "mip"        # "mip" | "pulp" | "gurobi"
+    solver: str = "mip"
     pool_size: int = 150
     params: Dict[str, Any] = {}
 
@@ -27,56 +25,112 @@ class OptimizeRequest(BaseModel):
 def health():
     return {"ok": True}
 
-def _parse_csv_summary(binary: bytes) -> Dict[str, Any]:
-    """Decode CSV bytes, sniff dialect, return headers/row_count/sample_rows/warnings."""
+def _parse_csv(binary: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     warnings: List[str] = []
-    # 1) decode safely
     text = binary.decode("utf-8", errors="replace")
     buf = io.StringIO(text)
-
-    # 2) try to sniff dialect
     try:
         sample = text[:4096]
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         buf.seek(0)
     except Exception:
         warnings.append("Could not sniff delimiter; defaulted to comma.")
-        dialect = csv.get_dialect("excel")  # comma
+        dialect = csv.get_dialect("excel")
         buf.seek(0)
-
-    # 3) read as DictReader
     reader = csv.DictReader(buf, dialect=dialect)
     headers = reader.fieldnames or []
+    rows = [row for row in reader]
+    summary = {
+        "headers": headers,
+        "row_count": len(rows),
+        "sample_rows": rows[:3],
+        "warnings": warnings,
+    }
+    return rows, summary
 
-    # 4) collect first 3 rows + count
-    sample_rows: List[Dict[str, Any]] = []
-    count = 0
-    for row in reader:
-        if count < 3:
-            sample_rows.append(row)
-        count += 1
+def _to_bool(v: Any) -> Optional[bool]:
+    if v is None: return None
+    s = str(v).strip().lower()
+    if s in ("1","true","t","yes","y"): return True
+    if s in ("0","false","f","no","n"): return False
+    return None
+
+def _to_int(v: Any) -> Optional[int]:
+    try: return int(float(str(v).replace(",","")))
+    except Exception: return None
+
+def _to_float(v: Any) -> Optional[float]:
+    try: return float(str(v).replace(",",""))
+    except Exception: return None
+
+REQUIRED_KEYS = ["player_id","name","team","position","salary","projection"]
+OPTIONAL_NUMERIC = {
+    "max_exposure": _to_float,
+    "min_exposure": _to_float,
+    "projected_ownership": _to_float,
+    "min_deviation": _to_float,
+    "max_deviation": _to_float,
+    "projection_floor": _to_float,
+    "projection_ceil": _to_float,
+}
+OPTIONAL_BOOL = {
+    "confirmed_starter": _to_bool,
+    "progressive_scale": _to_bool,
+}
+
+def _normalize_rows(rows: List[Dict[str, Any]], mapping: Dict[str, str]) -> Dict[str, Any]:
+    players: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    csv_headers = set(rows[0].keys()) if rows else set()
+    bad_refs = [dst for dst, src in mapping.items() if src and src not in csv_headers]
+    if bad_refs:
+        errors.append({"row": None, "error": f"Mapping refers to missing columns: {bad_refs}"})
+
+    for i, r in enumerate(rows):
+        item: Dict[str, Any] = {}
+        err: List[str] = []
+        for key in REQUIRED_KEYS:
+            src = mapping.get(key)
+            val = r.get(src) if src else None
+            if key == "salary":
+                coerced = _to_int(val)
+                if coerced is None: err.append(f"Invalid salary from '{src}': {val!r}")
+                item[key] = coerced
+            elif key == "projection":
+                coerced = _to_float(val)
+                if coerced is None: err.append(f"Invalid projection from '{src}': {val!r}")
+                item[key] = coerced
+            else:
+                sval = ("" if val is None else str(val).strip())
+                if not sval: err.append(f"Missing {key} from '{src}'")
+                item[key] = sval
+        for key, caster in OPTIONAL_NUMERIC.items():
+            src = mapping.get(key)
+            if src: item[key] = caster(r.get(src))
+        for key, caster in OPTIONAL_BOOL.items():
+            src = mapping.get(key)
+            if src: item[key] = caster(r.get(src))
+        if err:
+            errors.append({"row": i, "error": "; ".join(err)})
+            continue
+        players.append(item)
 
     return {
-        "headers": headers,
-        "row_count": count,
-        "sample_rows": sample_rows,
-        "warnings": warnings,
+        "players": players,
+        "count_ok": len(players),
+        "count_invalid": len(errors),
+        "errors": errors[:50],
     }
 
 @app.post("/optimize")
-async def optimize(settings: str = Form(...), csv: UploadFile = File(...)):
-    """
-    Multipart endpoint:
-    - 'settings': JSON string matching OptimizeRequest
-    - 'csv': uploaded projections/player pool CSV
-
-    For now: parse CSV and return a summary; no optimization yet.
-    """
+async def optimize(
+    settings: str = Form(...),
+    csv: UploadFile = File(...),
+    mapping: Optional[str] = Form(None),
+):
     raw = await csv.read()
 
-    # Parse settings safely
-    parsed_settings: Dict[str, Any]
-    settings_model: Optional[OptimizeRequest] = None
     try:
         settings_json = json.loads(settings)
         settings_model = OptimizeRequest(**settings_json)
@@ -84,11 +138,22 @@ async def optimize(settings: str = Form(...), csv: UploadFile = File(...)):
     except (json.JSONDecodeError, ValidationError) as e:
         parsed_settings = {"settings_raw": settings, "parse_error": str(e)}
 
-    summary = _parse_csv_summary(raw)
+    rows, csv_summary = _parse_csv(raw)
+
+    normalized = None
+    if mapping:
+        try:
+            mapping_json = json.loads(mapping)
+            if not isinstance(mapping_json, dict):
+                raise ValueError("mapping must be a JSON object")
+            normalized = _normalize_rows(rows, mapping_json)
+        except Exception as e:
+            normalized = {"error": f"Invalid mapping: {e}"}
 
     return {
         "ok": True,
         "received_csv_bytes": len(raw),
         "settings": parsed_settings,
-        "csv_summary": summary,
+        "csv_summary": csv_summary,
+        "normalized": normalized,
     }
