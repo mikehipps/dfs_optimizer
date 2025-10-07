@@ -14,6 +14,7 @@
     .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
     .muted { color:#666; }
     pre { background:#f8f8f8; padding:10px; border-radius:8px; overflow:auto; }
+    details summary { cursor:pointer; font-weight:600; }
   </style>
 </head>
 <body>
@@ -60,7 +61,18 @@
     </div>
   </div>
 
-  <pre id="outOptimize"></pre>
+  <div id="optimizeOutput" style="margin:10px 0;">
+    <details id="optimizeDetails">
+      <summary>Optimize response (click to expand)</summary>
+      <pre id="outOptimize" style="max-height:240px;"></pre>
+    </details>
+  </div>
+  <div id="poolControls" style="display:none; margin:10px 0;">
+    <button id="btnLoadPool">Preview Player Pool</button>
+    <button id="btnSavePool" disabled>Save changes</button>
+    <span id="poolMeta" style="margin-left:10px;"></span>
+  </div>
+  <div id="poolTableWrap" style="max-height:400px; overflow:auto; border:1px solid #ccc; display:none;"></div>
 </fieldset>
 
 
@@ -109,6 +121,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const mappingForm = document.getElementById("mappingForm");
   const mappingGrid = document.getElementById("mappingGrid");
   const outOptimize = document.getElementById("outOptimize");
+  const optimizeDetails = document.getElementById("optimizeDetails");
+  const poolControls = document.getElementById("poolControls");
+  const poolMeta = document.getElementById("poolMeta");
+  const poolTableWrap = document.getElementById("poolTableWrap");
+  const btnLoadPool = document.getElementById("btnLoadPool");
+  const btnSavePool = document.getElementById("btnSavePool");
 
   const REQUIRED_KEYS = ["player_id","name","team","position","salary","projection"];
   const OPTIONAL_KEYS = [
@@ -116,6 +134,222 @@ document.addEventListener("DOMContentLoaded", () => {
     "min_deviation","max_deviation","projection_floor","projection_ceil",
     "confirmed_starter","progressive_scale"
   ];
+
+  const POOL_COLUMNS = [
+    "player_id","name","team","position","salary","projection",
+    "active","lock","exclude","max_exposure","min_exposure"
+  ];
+  const NUMERIC_POOL_COLUMNS = new Set(["salary","projection","max_exposure","min_exposure"]);
+  const BOOL_POOL_COLUMNS = new Set(["active","lock","exclude"]);
+
+  let lastJobId = null;
+  let poolCache = [];
+  let poolView = [];
+  const poolDirty = new Map();
+  const sortState = { key: null, dir: "asc" };
+
+  function resetPoolUI(){
+    poolDirty.clear();
+    btnSavePool.disabled = true;
+    sortState.key = null;
+    sortState.dir = "asc";
+    poolView = [];
+  }
+
+  function onOptimizeResponse(json){
+    outOptimize.textContent = JSON.stringify(json, null, 2);
+    lastJobId = json?.job?.job_id || null;
+    poolControls.style.display = lastJobId ? "block" : "none";
+    poolMeta.textContent = "";
+    poolTableWrap.style.display = "none";
+    poolTableWrap.innerHTML = "";
+    resetPoolUI();
+    poolCache = [];
+    optimizeDetails.open = false;
+  }
+
+  function printOptimize(json){
+    onOptimizeResponse(json);
+  }
+
+  async function loadPool(){
+    if(!lastJobId){
+      alert("No job_id. Run Optimize first.");
+      return;
+    }
+    const r = await fetch(`${API}/jobs/${lastJobId}/pool`);
+    if(!r.ok){
+      alert(`Failed to load pool: ${r.status}`);
+      return;
+    }
+    const js = await r.json();
+    poolCache = js.players || [];
+    if(js.error){
+      alert(js.error);
+    }
+    const total = typeof js.count === "number" ? js.count : poolCache.length;
+    const shown = Math.min(poolCache.length, 200);
+    poolMeta.textContent = shown < total ? `rows: ${total} (showing ${shown})` : `rows: ${total}`;
+    resetPoolUI();
+    poolView = [...poolCache];
+    renderPoolTable(poolView.slice(0, 200));
+  }
+
+  function renderPoolTable(rows){
+    const wrap = poolTableWrap;
+    wrap.style.display = "block";
+    if(!rows.length){
+      wrap.innerHTML = "<i>No rows.</i>";
+      return;
+    }
+
+    const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const escapeAttr = (value) => escapeHtml(value).replace(/"/g, "&quot;");
+
+    const thead = `<thead><tr>${POOL_COLUMNS.map(col=>{
+      const label = `${escapeHtml(col)}${sortState.key === col ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}`;
+      return `<th data-key="${escapeAttr(col)}" style="position:sticky;top:0;background:#fafafa">${label}</th>`;
+    }).join("")}</tr></thead>`;
+    const body = rows.map(row=>{
+      const pid = row.player_id;
+      const pidAttr = escapeAttr(pid);
+      const cell = (col)=>{
+        const rawVal = row[col] ?? "";
+        if(["projection","max_exposure","min_exposure"].includes(col)){
+          return `<td><input type="text" data-pid="${pidAttr}" data-key="${col}" value="${escapeAttr(rawVal)}" style="width:6em"/></td>`;
+        }
+        if(["active","lock","exclude"].includes(col)){
+          const checked = String(rawVal).toLowerCase() === "true" ? "checked" : "";
+          return `<td style="text-align:center"><input type="checkbox" data-pid="${pidAttr}" data-key="${col}" ${checked}/></td>`;
+        }
+        return `<td>${escapeHtml(rawVal)}</td>`;
+      };
+      return `<tr>${POOL_COLUMNS.map(cell).join("")}</tr>`;
+    }).join("");
+
+    wrap.innerHTML = `<table style="border-collapse:collapse;width:100%">${thead}<tbody>${body}</tbody></table>`;
+
+    wrap.querySelectorAll("th[data-key]").forEach(th=>{
+      th.style.cursor = "pointer";
+      th.addEventListener("click", ()=>{
+        const key = th.dataset.key;
+        if(key){
+          applySort(key);
+        }
+      });
+    });
+
+    wrap.querySelectorAll('input[type="text"]').forEach(inp=>{
+      inp.addEventListener("change", (event)=>{
+        const pid = event.target.dataset.pid;
+        const key = event.target.dataset.key;
+        const value = event.target.value;
+        const existing = poolDirty.get(pid) || { player_id: pid };
+        existing[key] = value;
+        poolDirty.set(pid, existing);
+        btnSavePool.disabled = false;
+      });
+    });
+
+    wrap.querySelectorAll('input[type="checkbox"]').forEach(box=>{
+      box.addEventListener("change", (event)=>{
+        const pid = event.target.dataset.pid;
+        const key = event.target.dataset.key;
+        const value = event.target.checked;
+        const existing = poolDirty.get(pid) || { player_id: pid };
+        existing[key] = value;
+        poolDirty.set(pid, existing);
+        btnSavePool.disabled = false;
+      });
+    });
+  }
+
+  function parseNumeric(value){
+    if(value === undefined || value === null){
+      return null;
+    }
+    const str = String(value).trim();
+    if(!str){
+      return null;
+    }
+    const num = Number(str.replace(/,/g, ""));
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function compareRows(a, b, key){
+    if(NUMERIC_POOL_COLUMNS.has(key)){
+      const av = parseNumeric(a[key]);
+      const bv = parseNumeric(b[key]);
+      if(av === null && bv === null) return 0;
+      if(av === null) return 1;
+      if(bv === null) return -1;
+      return av - bv;
+    }
+    if(BOOL_POOL_COLUMNS.has(key)){
+      const av = String(a[key]).toLowerCase() === "true" ? 1 : 0;
+      const bv = String(b[key]).toLowerCase() === "true" ? 1 : 0;
+      return av - bv;
+    }
+    const av = String(a[key] ?? "").toLowerCase();
+    const bv = String(b[key] ?? "").toLowerCase();
+    if(av < bv) return -1;
+    if(av > bv) return 1;
+    return 0;
+  }
+
+  function applySort(key){
+    if(!key){
+      return;
+    }
+    if(sortState.key === key){
+      sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+    } else {
+      sortState.key = key;
+      sortState.dir = "asc";
+    }
+
+    poolView = [...poolCache];
+    if(sortState.key){
+      poolView.sort((a, b)=>{
+        const cmp = compareRows(a, b, sortState.key);
+        return sortState.dir === "asc" ? cmp : -cmp;
+      });
+    }
+
+    renderPoolTable(poolView.slice(0, 200));
+  }
+
+  btnLoadPool.onclick = loadPool;
+
+  btnSavePool.onclick = async ()=>{
+    if(!lastJobId){
+      return;
+    }
+    const updates = Array.from(poolDirty.values());
+    if(!updates.length){
+      return;
+    }
+    try{
+      const r = await fetch(`${API}/jobs/${lastJobId}/pool`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ players: updates })
+      });
+      if(!r.ok){
+        alert(`Save failed: ${r.status}`);
+        return;
+      }
+      const js = await r.json();
+      if(!js.ok){
+        alert(js.error || "Save failed");
+        return;
+      }
+      await loadPool();
+      alert(`Saved ${js.changed} rows.`);
+    }catch(err){
+      alert(err.message || "Save failed");
+    }
+  };
 
   function readSettings(){
     return {
@@ -192,6 +426,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btnSaveTpl.disabled = false;
       btnLoadTpl.disabled = false;
       outOptimize.textContent = JSON.stringify(js.csv_summary, null, 2);
+      optimizeDetails.open = false;
     }catch(e){ alert(e.message); }
   };
 
@@ -212,7 +447,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fd.append("mapping", JSON.stringify(mapping));
     const r = await fetch(`${API}/optimize`, { method:"POST", body:fd });
     const js = await r.json().catch(()=>({error:"non-JSON"}));
-    outOptimize.textContent = JSON.stringify(js, null, 2);
+    printOptimize(js);
   };
 
   // localStorage templates
