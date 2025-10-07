@@ -251,24 +251,31 @@ def get_pool(job_id: str):
             headers.append(col)
 
     for row in rows:
-        # normalize truthy flags and ensure defaults when missing/blank
+        projection_val = row.get("projection")
+        projection_is_zero = _projection_is_zero(projection_val)
+
+        exclude_val = row.get("exclude")
+        if exclude_val is None or str(exclude_val).strip() == "":
+            # Default: auto-exclude zero projection players
+            row["exclude"] = "true" if projection_is_zero else "false"
+        else:
+            row["exclude"] = _csv_bool_to_str(exclude_val)
+
         active_val = row.get("active")
         if active_val is None or str(active_val).strip() == "":
-            row["active"] = "true"
+            # Default active only when the player is not auto-excluded
+            row["active"] = "false" if row.get("exclude") == "true" else "true"
         else:
             row["active"] = _csv_bool_to_str(active_val)
+            if row.get("exclude") == "true":
+                # Prevent conflicting states when exclude is active
+                row["active"] = "false"
 
         lock_val = row.get("lock")
         if lock_val is None or str(lock_val).strip() == "":
             row["lock"] = "false"
         else:
             row["lock"] = _csv_bool_to_str(lock_val)
-
-        exclude_val = row.get("exclude")
-        if exclude_val is None or str(exclude_val).strip() == "":
-            row["exclude"] = "true" if _projection_is_zero(row.get("projection")) else "false"
-        else:
-            row["exclude"] = _csv_bool_to_str(exclude_val)
 
         for exposure_key in ("max_exposure", "min_exposure"):
             exposure_val = row.get(exposure_key)
@@ -297,9 +304,13 @@ async def update_pool(job_id: str, body: Dict[str, Any]):
         if col not in headers:
             headers.append(col)
             for row in current_rows:
+                projection_val = row.get("projection")
+                projection_is_zero = _projection_is_zero(projection_val)
                 if col == "active":
-                    row[col] = "true"
-                elif col in ("lock", "exclude"):
+                    row[col] = "false" if projection_is_zero else "true"
+                elif col == "exclude":
+                    row[col] = "true" if projection_is_zero else "false"
+                elif col == "lock":
                     row[col] = "false"
                 else:
                     row[col] = ""
@@ -349,6 +360,10 @@ async def update_pool(job_id: str, body: Dict[str, Any]):
 
         if row_changed:
             changed += 1
+
+    for row in current_rows:
+        if row.get("exclude") == "true":
+            row["active"] = "false"
 
     with pool_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csvmod.DictWriter(f, fieldnames=headers)

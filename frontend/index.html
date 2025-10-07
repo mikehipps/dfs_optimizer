@@ -146,6 +146,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let poolCache = [];
   let poolView = [];
   const poolDirty = new Map();
+  const poolIndex = new Map();
   const sortState = { key: null, dir: "asc" };
 
   function resetPoolUI(){
@@ -154,6 +155,7 @@ document.addEventListener("DOMContentLoaded", () => {
     sortState.key = null;
     sortState.dir = "asc";
     poolView = [];
+    poolIndex.clear();
   }
 
   function onOptimizeResponse(json){
@@ -191,8 +193,34 @@ document.addEventListener("DOMContentLoaded", () => {
     const shown = Math.min(poolCache.length, 200);
     poolMeta.textContent = shown < total ? `rows: ${total} (showing ${shown})` : `rows: ${total}`;
     resetPoolUI();
+    for(const row of poolCache){
+      if(!row) continue;
+      const pid = row.player_id;
+      if(pid === undefined || pid === null) continue;
+      poolIndex.set(String(pid), row);
+    }
     poolView = [...poolCache];
     renderPoolTable(poolView.slice(0, 200));
+  }
+​
+ |  | 
+206
+ 
+
+  function markDirty(pid, key, dirtyValue, rowValue){
+    if(!pid || !key){
+      return;
+    }
+    const pidKey = String(pid);
+    const rowObj = poolIndex.get(pidKey);
+    const playerIdValue = rowObj && rowObj.player_id !== undefined ? rowObj.player_id : pid;
+    const existing = poolDirty.get(pidKey) || { player_id: playerIdValue };
+    existing[key] = dirtyValue;
+    poolDirty.set(pidKey, existing);
+    if(rowObj){
+      rowObj[key] = rowValue;
+    }
+    btnSavePool.disabled = false;
   }
 
   function renderPoolTable(rows){
@@ -244,10 +272,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const pid = event.target.dataset.pid;
         const key = event.target.dataset.key;
         const value = event.target.value;
-        const existing = poolDirty.get(pid) || { player_id: pid };
-        existing[key] = value;
-        poolDirty.set(pid, existing);
-        btnSavePool.disabled = false;
+        markDirty(pid, key, value, value);
       });
     });
 
@@ -256,10 +281,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const pid = event.target.dataset.pid;
         const key = event.target.dataset.key;
         const value = event.target.checked;
-        const existing = poolDirty.get(pid) || { player_id: pid };
-        existing[key] = value;
-        poolDirty.set(pid, existing);
-        btnSavePool.disabled = false;
+        markDirty(pid, key, value, value ? "true" : "false");
       });
     });
   }
