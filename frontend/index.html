@@ -5,20 +5,161 @@
   <title>DFS Optimizer UI</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+    :root {
+      color-scheme: light;
+      --bg-color: #ffffff;
+      --text-color: #111111;
+      --muted-color: #555555;
+      --panel-bg: #f5f5f5;
+      --border-color: #d0d0d0;
+      --button-bg: #e9e9e9;
+      --button-text: #111111;
+      --table-header-bg: #f0f0f0;
+      --table-row-alt: #fafafa;
+      --link-color: #0b5fff;
+    }
+
+    body.dark-mode {
+      color-scheme: dark;
+      --bg-color: #0f1116;
+      --text-color: #f3f5f7;
+      --muted-color: #a0a8b8;
+      --panel-bg: #181c24;
+      --border-color: #2c3444;
+      --button-bg: #252c3a;
+      --button-text: #f3f5f7;
+      --table-header-bg: #1f2533;
+      --table-row-alt: #1a1f2a;
+      --link-color: #6ea8ff;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      margin: 24px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    a { color: var(--link-color); }
+
     h1 { margin: 0 0 12px; }
-    fieldset { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
+
+    fieldset {
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px;
+      margin: 12px 0;
+      background: var(--panel-bg);
+    }
+
     legend { padding: 0 6px; }
+
     label { display:inline-block; margin:6px 12px 6px 0; }
-    input, select, button { padding:6px 8px; margin: 4px 8px; }
+
+    input, select, button {
+      padding:6px 8px;
+      margin: 4px 8px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+    }
+
+    button {
+      background: var(--button-bg);
+      color: var(--button-text);
+      cursor: pointer;
+    }
+
+    button:hover {
+      filter: brightness(1.05);
+    }
+
     .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .muted { color:#666; }
-    pre { background:#f8f8f8; padding:10px; border-radius:8px; overflow:auto; }
+
+    .muted { color: var(--muted-color); }
+
+    pre {
+      background: var(--panel-bg);
+      padding:10px;
+      border-radius:8px;
+      overflow:auto;
+      border: 1px solid var(--border-color);
+    }
+
+    details summary { cursor:pointer; font-weight:600; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      color: inherit;
+    }
+
+    th, td {
+      border: 1px solid var(--border-color);
+      padding: 6px;
+      background: inherit;
+    }
+
+    th {
+      background: var(--table-header-bg);
+    }
+
+    tbody tr:nth-child(even) td {
+      background: var(--table-row-alt);
+    }
+
+    #poolTableWrap {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+    }
+
+    .lineup-card {
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px;
+      margin: 10px 0;
+      background: var(--panel-bg);
+    }
+
+    .lineup-card h4 {
+      margin: 0 0 6px;
+    }
+
+    .lineup-meta {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .lineup-card table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .lineup-card th,
+    .lineup-card td {
+      border: 1px solid var(--border-color);
+      padding: 6px;
+    }
+
+    .top-meta {
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .top-meta p {
+      margin: 0;
+    }
   </style>
 </head>
 <body>
   <h1>DFS Optimizer (placeholder)</h1>
-  <p class="muted">Backend: FastAPI + pydfs + CBC (python-mip). Use this page to hit /health or send a CSV to /optimize.</p>
+  <div class="row top-meta">
+    <p class="muted">Backend: FastAPI + pydfs + CBC (python-mip). Use this page to hit /health or send a CSV to /optimize.</p>
+    <button id="themeToggle" type="button">Switch to dark mode</button>
+  </div>
 
   <fieldset>
     <legend>Health Check</legend>
@@ -26,214 +167,660 @@
     <pre id="outHealth"></pre>
   </fieldset>
 
-<fieldset>
-  <legend>Upload CSV & Header Mapping</legend>
-  <div class="row">
-    <label>CSV: <input type="file" id="csvFile" accept=".csv" /></label>
-    <label>Site:
-      <select id="site">
-        <option>FANDUEL</option><option>DRAFTKINGS</option>
-      </select>
-    </label>
-    <label>Sport:
-      <select id="sport">
-        <option>NFL</option><option>NBA</option><option>MLB</option><option>NHL</option>
-      </select>
-    </label>
-    <label>Solver:
-      <select id="solver"><option>mip</option><option>pulp</option></select>
-    </label>
-    <label>Pool size: <input type="number" id="poolSize" value="150" min="1" /></label>
-  </div>
-
-  <div class="row">
-    <button id="btnLoadHeaders">Load headers</button>
-    <button id="btnSaveTpl" disabled>Save mapping template</button>
-    <button id="btnLoadTpl" disabled>Load mapping template</button>
-  </div>
-
-  <div id="mappingForm" style="display:none; margin-top:8px;">
-    <h3>Map CSV columns</h3>
-    <div id="mappingGrid"></div>
+  <fieldset>
+    <legend>Upload CSV & Header Mapping</legend>
     <div class="row">
-      <button id="btnOptimize">Build mapping & Optimize</button>
+      <label>CSV: <input type="file" id="csvFile" accept=".csv" /></label>
+      <label>Site:
+        <select id="site">
+          <option>FANDUEL</option><option>DRAFTKINGS</option>
+        </select>
+      </label>
+      <label>Sport:
+        <select id="sport">
+          <option>NFL</option><option>NBA</option><option>MLB</option><option>NHL</option>
+        </select>
+      </label>
+      <label>Solver:
+        <select id="solver"><option>mip</option><option>pulp</option></select>
+      </label>
+      <label>Pool size: <input type="number" id="poolSize" value="150" min="1" /></label>
     </div>
-  </div>
 
-  <pre id="outOptimize"></pre>
-</fieldset>
+    <div class="row">
+      <button id="btnLoadHeaders">Load headers</button>
+      <button id="btnSaveTpl" disabled>Save mapping template</button>
+      <button id="btnLoadTpl" disabled>Load mapping template</button>
+    </div>
 
+    <div id="mappingForm" style="display:none; margin-top:8px;">
+      <h3>Map CSV columns</h3>
+      <div id="mappingGrid"></div>
+      <div class="row">
+        <button id="btnOptimize">Build mapping & Optimize</button>
+      </div>
+    </div>
+
+    <div id="optimizeOutput" style="margin:10px 0;">
+      <details id="optimizeDetails">
+        <summary>Optimize response (click to expand)</summary>
+        <pre id="outOptimize" style="max-height:240px;"></pre>
+      </details>
+    </div>
+    <div id="poolControls" style="display:none; margin:10px 0;">
+      <button id="btnLoadPool">Preview Player Pool</button>
+      <button id="btnSavePool" disabled>Save changes</button>
+      <span id="poolMeta" style="margin-left:10px;"></span>
+    </div>
+    <div id="poolTableWrap" style="max-height:400px; overflow:auto; display:none;"></div>
+  </fieldset>
+
+  <fieldset id="solvePanel" style="display:none;">
+    <legend>Solve Lineups</legend>
+    <div class="row">
+      <label>Lineups to generate: <input type="number" id="solveCount" value="20" min="1" max="150" /></label>
+      <button id="btnSolve">Solve lineups</button>
+      <span id="solveStatus" class="muted"></span>
+    </div>
+    <div id="solveWarnings" class="muted" style="margin:6px 0;"></div>
+    <div id="solveResults" style="display:none;">
+      <h3 style="margin-top:0;">Sample lineups</h3>
+      <div id="solveLineups"></div>
+    </div>
+  </fieldset>
 
   <script>
-    const API = "/api"; // adjust if reverse-proxy later
+    document.addEventListener("DOMContentLoaded", () => {
+      const API = "/api";
 
-    document.getElementById("btnHealth").onclick = async () => {
-      const r = await fetch(`${API}/health`);
-      document.getElementById("outHealth").textContent = JSON.stringify(await r.json(), null, 2);
-    };
+      const csvFile = document.getElementById("csvFile");
+      const site = document.getElementById("site");
+      const sport = document.getElementById("sport");
+      const solver = document.getElementById("solver");
+      const poolSize = document.getElementById("poolSize");
 
-    document.getElementById("btnSend").onclick = async () => {
-      const f = document.getElementById("csvFile").files[0];
-      if (!f) { alert("Pick a CSV"); return; }
-      const settings = {
-        site: document.getElementById("site").value,
-        sport: document.getElementById("sport").value,
-        solver: document.getElementById("solver").value,
-        pool_size: parseInt(document.getElementById("poolSize").value, 10) || 150,
-        params: {}
-      };
-      const fd = new FormData();
-      fd.append("settings", JSON.stringify(settings));
-      fd.append("csv", f);
-      const r = await fetch(`${API}/optimize`, { method: "POST", body: fd });
-      const json = await r.json().catch(() => ({ error: "non-JSON response" }));
-      document.getElementById("outOptimize").textContent = JSON.stringify(json, null, 2);
-    };
-  </script>
- <script>
-document.addEventListener("DOMContentLoaded", () => {
-  const API = "/api";
+      const btnHealth = document.getElementById("btnHealth");
+      const outHealth = document.getElementById("outHealth");
+      const btnLoadHeaders = document.getElementById("btnLoadHeaders");
+      const btnOptimize = document.getElementById("btnOptimize");
+      const btnSaveTpl = document.getElementById("btnSaveTpl");
+      const btnLoadTpl = document.getElementById("btnLoadTpl");
+      const themeToggle = document.getElementById("themeToggle");
 
-  // grab all elements explicitly
-  const csvFile     = document.getElementById("csvFile");
-  const site        = document.getElementById("site");
-  const sport       = document.getElementById("sport");
-  const solver      = document.getElementById("solver");
-  const poolSize    = document.getElementById("poolSize");
+      const mappingForm = document.getElementById("mappingForm");
+      const mappingGrid = document.getElementById("mappingGrid");
+      const outOptimize = document.getElementById("outOptimize");
+      const optimizeDetails = document.getElementById("optimizeDetails");
+      const poolControls = document.getElementById("poolControls");
+      const poolMeta = document.getElementById("poolMeta");
+      const poolTableWrap = document.getElementById("poolTableWrap");
+      const btnLoadPool = document.getElementById("btnLoadPool");
+      const btnSavePool = document.getElementById("btnSavePool");
+      const solvePanel = document.getElementById("solvePanel");
+      const solveCount = document.getElementById("solveCount");
+      const btnSolve = document.getElementById("btnSolve");
+      const solveStatus = document.getElementById("solveStatus");
+      const solveResults = document.getElementById("solveResults");
+      const solveLineups = document.getElementById("solveLineups");
+      const solveWarnings = document.getElementById("solveWarnings");
 
-  const btnLoadHeaders = document.getElementById("btnLoadHeaders");
-  const btnOptimize    = document.getElementById("btnOptimize");
-  const btnSaveTpl     = document.getElementById("btnSaveTpl");
-  const btnLoadTpl     = document.getElementById("btnLoadTpl");
+      const REQUIRED_KEYS = ["player_id","name","team","position","salary","projection"];
+      const OPTIONAL_KEYS = [
+        "max_exposure","min_exposure","projected_ownership",
+        "min_deviation","max_deviation","projection_floor","projection_ceil",
+        "confirmed_starter","progressive_scale"
+      ];
 
-  const mappingForm = document.getElementById("mappingForm");
-  const mappingGrid = document.getElementById("mappingGrid");
-  const outOptimize = document.getElementById("outOptimize");
+      const POOL_COLUMNS = [
+        "player_id","name","team","position","salary","projection",
+        "active","lock","exclude","max_exposure","min_exposure"
+      ];
+      const NUMERIC_POOL_COLUMNS = new Set(["salary","projection","max_exposure","min_exposure"]);
+      const BOOL_POOL_COLUMNS = new Set(["active","lock","exclude"]);
 
-  const REQUIRED_KEYS = ["player_id","name","team","position","salary","projection"];
-  const OPTIONAL_KEYS = [
-    "max_exposure","min_exposure","projected_ownership",
-    "min_deviation","max_deviation","projection_floor","projection_ceil",
-    "confirmed_starter","progressive_scale"
-  ];
+      let lastJobId = null;
+      let poolCache = [];
+      let poolView = [];
+      const poolDirty = new Map();
+      const poolIndex = new Map();
+      const sortState = { key: null, dir: "asc" };
 
-  function readSettings(){
-    return {
-      site: site.value,
-      sport: sport.value,
-      solver: solver.value,
-      pool_size: parseInt(poolSize.value,10) || 150,
-      params: {}
-    };
-  }
+      const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const escapeAttr = (value) => escapeHtml(value).replace(/"/g, "&quot;");
 
-  async function postForHeaders(file, settings){
-    const fd = new FormData();
-    fd.append("settings", JSON.stringify(settings));
-    fd.append("csv", file); // no mapping
-    const r = await fetch(`${API}/optimize`, { method:"POST", body:fd });
-    if(!r.ok) throw new Error(`Header load failed: ${r.status}`);
-    return r.json();
-  }
-
-  function guessHeader(key, headers){
-    const wants = {
-      player_id:["id","player id","fd_id","b_id"],
-      name:["name","nickname","player"],
-      team:["team","tm"],
-      position:["position","pos","roster position"],
-      salary:["salary","sal","cost"],
-      projection:["proj","projection","ppg_projection","fpts","points"]
-    }[key] || [key];
-    const lower = headers.map(h=>[h,h.toLowerCase()]);
-    for(const w of wants){
-      const hit = lower.find(([h,l])=>l.includes(w));
-      if(hit) return hit[0];
-    }
-    return "";
-  }
-
-  function renderMappingForm(headers){
-    mappingGrid.innerHTML = "";
-    const makeRow = (label,key,required)=>{
-      const wrap = document.createElement("div"); wrap.style.margin="6px 0";
-      const lab = document.createElement("label"); lab.textContent = `${label}${required?" *":""}: `;
-      const sel = document.createElement("select"); sel.dataset.key = key;
-
-      const empty = document.createElement("option");
-      empty.value = ""; empty.textContent = required ? "-- choose --" : "(not present)";
-      sel.appendChild(empty);
-
-      headers.forEach(h=>{
-        const o=document.createElement("option"); o.value=h; o.textContent=h; sel.appendChild(o);
+      btnHealth?.addEventListener("click", async () => {
+        try {
+          const resp = await fetch(`${API}/health`);
+          const json = await resp.json();
+          outHealth.textContent = JSON.stringify(json, null, 2);
+        } catch (err) {
+          outHealth.textContent = JSON.stringify({ error: err?.message || String(err) }, null, 2);
+        }
       });
 
-      if(required){
-        const g=guessHeader(key, headers);
-        if(g) sel.value=g;
+      function resetPoolUI() {
+        poolDirty.clear();
+        btnSavePool.disabled = true;
+        sortState.key = null;
+        sortState.dir = "asc";
+        poolView = [];
+        poolIndex.clear();
       }
 
-      wrap.appendChild(lab);
-      wrap.appendChild(sel);
-      mappingGrid.appendChild(wrap);
-    };
-    REQUIRED_KEYS.forEach(k=>makeRow(k,k,true));
-    OPTIONAL_KEYS.forEach(k=>makeRow(k,k,false));
-  }
-
-  btnLoadHeaders.onclick = async ()=>{
-    const f = csvFile.files[0]; if(!f){ alert("Pick a CSV first"); return; }
-    try{
-      const js = await postForHeaders(f, readSettings());
-      const headers = js?.csv_summary?.headers || [];
-      if(!headers.length){ alert("No headers detected."); return; }
-      renderMappingForm(headers);
-      mappingForm.style.display = "block";
-      btnSaveTpl.disabled = false;
-      btnLoadTpl.disabled = false;
-      outOptimize.textContent = JSON.stringify(js.csv_summary, null, 2);
-    }catch(e){ alert(e.message); }
-  };
-
-  btnOptimize.onclick = async ()=>{
-    const f = csvFile.files[0]; if(!f){ alert("Pick a CSV first"); return; }
-    const selects = mappingGrid.querySelectorAll("select");
-    const mapping = {};
-    for(const sel of selects){
-      const key = sel.dataset.key;
-      if(REQUIRED_KEYS.includes(key) && !sel.value){
-        alert(`Select a column for ${key}`); return;
+      function resetSolveUI() {
+        if (solveStatus) solveStatus.textContent = "";
+        if (solveWarnings) solveWarnings.textContent = "";
+        if (solveLineups) solveLineups.innerHTML = "";
+        if (solveResults) solveResults.style.display = "none";
       }
-      if(sel.value) mapping[key] = sel.value;
-    }
-    const fd = new FormData();
-    fd.append("settings", JSON.stringify(readSettings()));
-    fd.append("csv", f);
-    fd.append("mapping", JSON.stringify(mapping));
-    const r = await fetch(`${API}/optimize`, { method:"POST", body:fd });
-    const js = await r.json().catch(()=>({error:"non-JSON"}));
-    outOptimize.textContent = JSON.stringify(js, null, 2);
-  };
 
-  // localStorage templates
-  const tplKey = ()=> `optimizer_mapping_${site.value}_${sport.value}`;
+      function onOptimizeResponse(json) {
+        outOptimize.textContent = JSON.stringify(json, null, 2);
+        lastJobId = json?.job?.job_id || null;
+        poolControls.style.display = lastJobId ? "block" : "none";
+        poolMeta.textContent = "";
+        poolTableWrap.style.display = "none";
+        poolTableWrap.innerHTML = "";
+        resetPoolUI();
+        resetSolveUI();
+        if (solvePanel) {
+          solvePanel.style.display = lastJobId ? "block" : "none";
+        }
+        poolCache = [];
+        if (optimizeDetails) {
+          optimizeDetails.open = false;
+        }
+      }
 
-  btnSaveTpl.onclick = ()=>{
-    const selects = mappingGrid.querySelectorAll("select");
-    const mapping = {};
-    for(const sel of selects){ if(sel.value) mapping[sel.dataset.key]=sel.value; }
-    localStorage.setItem(tplKey(), JSON.stringify(mapping));
-    alert("Template saved.");
-  };
+      function printOptimize(json) {
+        onOptimizeResponse(json);
+      }
 
-  btnLoadTpl.onclick = ()=>{
-    const raw = localStorage.getItem(tplKey());
-    if(!raw){ alert("No template for this Site/Sport."); return; }
-    const mapping = JSON.parse(raw);
-    mappingGrid.querySelectorAll("select").forEach(sel=>{
-      if(mapping[sel.dataset.key]) sel.value = mapping[sel.dataset.key];
+      async function loadPool() {
+        if (!lastJobId) {
+          alert("No job_id. Run Optimize first.");
+          return;
+        }
+        const resp = await fetch(`${API}/jobs/${lastJobId}/pool`);
+        if (!resp.ok) {
+          alert(`Failed to load pool: ${resp.status}`);
+          return;
+        }
+        const js = await resp.json();
+        poolCache = js.players || [];
+        if (js.error) {
+          alert(js.error);
+        }
+        const total = typeof js.count === "number" ? js.count : poolCache.length;
+        const shown = Math.min(poolCache.length, 200);
+        poolMeta.textContent = shown < total ? `rows: ${total} (showing ${shown})` : `rows: ${total}`;
+        resetPoolUI();
+        for (const row of poolCache) {
+          if (!row) continue;
+          const pid = row.player_id;
+          if (pid === undefined || pid === null) continue;
+          poolIndex.set(String(pid), row);
+        }
+        poolView = poolCache.slice();
+        renderPoolTable(poolView.slice(0, 200));
+      }
+
+      function markDirty(pid, key, dirtyValue, rowValue) {
+        if (!pid || !key) {
+          return;
+        }
+        const pidKey = String(pid);
+        const rowObj = poolIndex.get(pidKey);
+        const playerIdValue = rowObj && rowObj.player_id !== undefined ? rowObj.player_id : pid;
+        const existing = poolDirty.get(pidKey) || { player_id: playerIdValue };
+        existing[key] = dirtyValue;
+        poolDirty.set(pidKey, existing);
+        if (rowObj) {
+          rowObj[key] = rowValue;
+        }
+        btnSavePool.disabled = false;
+      }
+
+      function renderPoolTable(rows) {
+        poolTableWrap.style.display = "block";
+        if (!rows.length) {
+          poolTableWrap.innerHTML = "<i>No rows.</i>";
+          return;
+        }
+
+        const thead = `<thead><tr>${POOL_COLUMNS.map((col) => {
+          const label = `${escapeHtml(col)}${sortState.key === col ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}`;
+          return `<th data-key="${escapeAttr(col)}" style="position:sticky;top:0;">${label}</th>`;
+        }).join("")}</tr></thead>`;
+
+        const body = rows.map((row) => {
+          const pid = row.player_id;
+          const pidAttr = escapeAttr(pid);
+          const cells = POOL_COLUMNS.map((col) => {
+            const rawVal = row[col] ?? "";
+            if (["projection","max_exposure","min_exposure"].includes(col)) {
+              return `<td><input type="text" data-pid="${pidAttr}" data-key="${col}" value="${escapeAttr(rawVal)}" style="width:6em"/></td>`;
+            }
+            if (["active","lock","exclude"].includes(col)) {
+              const checked = String(rawVal).toLowerCase() === "true" ? "checked" : "";
+              return `<td style="text-align:center"><input type="checkbox" data-pid="${pidAttr}" data-key="${col}" ${checked}/></td>`;
+            }
+            return `<td>${escapeHtml(rawVal)}</td>`;
+          });
+          return `<tr>${cells.join("")}</tr>`;
+        }).join("");
+
+        poolTableWrap.innerHTML = `<table style="border-collapse:collapse;width:100%">${thead}<tbody>${body}</tbody></table>`;
+
+        poolTableWrap.querySelectorAll("th[data-key]").forEach((th) => {
+          th.style.cursor = "pointer";
+          th.addEventListener("click", () => {
+            const key = th.dataset.key;
+            if (key) {
+              applySort(key);
+            }
+          });
+        });
+
+        poolTableWrap.querySelectorAll('input[type="text"]').forEach((input) => {
+          input.addEventListener("change", (event) => {
+            const pid = event.target.dataset.pid;
+            const key = event.target.dataset.key;
+            const value = event.target.value;
+            markDirty(pid, key, value, value);
+          });
+        });
+
+        poolTableWrap.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+          box.addEventListener("change", (event) => {
+            const pid = event.target.dataset.pid;
+            const key = event.target.dataset.key;
+            const value = event.target.checked;
+            markDirty(pid, key, value, value ? "true" : "false");
+          });
+        });
+      }
+
+      function parseNumeric(value) {
+        if (value === undefined || value === null) {
+          return null;
+        }
+        const str = String(value).trim();
+        if (!str) {
+          return null;
+        }
+        const num = Number(str.replace(/,/g, ""));
+        return Number.isFinite(num) ? num : null;
+      }
+
+      function compareRows(a, b, key) {
+        if (NUMERIC_POOL_COLUMNS.has(key)) {
+          const av = parseNumeric(a[key]);
+          const bv = parseNumeric(b[key]);
+          if (av === null && bv === null) return 0;
+          if (av === null) return 1;
+          if (bv === null) return -1;
+          return av - bv;
+        }
+        if (BOOL_POOL_COLUMNS.has(key)) {
+          const av = String(a[key]).toLowerCase() === "true" ? 1 : 0;
+          const bv = String(b[key]).toLowerCase() === "true" ? 1 : 0;
+          return av - bv;
+        }
+        const av = String(a[key] ?? "").toLowerCase();
+        const bv = String(b[key] ?? "").toLowerCase();
+        if (av < bv) return -1;
+        if (av > bv) return 1;
+        return 0;
+      }
+
+      function applySort(key) {
+        if (!key) {
+          return;
+        }
+        if (sortState.key === key) {
+          sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+        } else {
+          sortState.key = key;
+          sortState.dir = "asc";
+        }
+
+        poolView = poolCache.slice();
+        if (sortState.key) {
+          poolView.sort((a, b) => {
+            const cmp = compareRows(a, b, sortState.key);
+            return sortState.dir === "asc" ? cmp : -cmp;
+          });
+        }
+
+        renderPoolTable(poolView.slice(0, 200));
+      }
+
+      btnLoadPool?.addEventListener("click", loadPool);
+
+      btnSavePool?.addEventListener("click", async () => {
+        if (!lastJobId) {
+          return;
+        }
+        const updates = Array.from(poolDirty.values());
+        if (!updates.length) {
+          return;
+        }
+        try {
+          const resp = await fetch(`${API}/jobs/${lastJobId}/pool`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ players: updates })
+          });
+          if (!resp.ok) {
+            alert(`Save failed: ${resp.status}`);
+            return;
+          }
+          const js = await resp.json();
+          if (!js.ok) {
+            alert(js.error || "Save failed");
+            return;
+          }
+          await loadPool();
+          alert(`Saved ${js.changed} rows.`);
+        } catch (err) {
+          alert(err?.message || "Save failed");
+        }
+      });
+
+      function renderLineupPreview(lineups) {
+        if (!solveLineups) {
+          return;
+        }
+        if (!Array.isArray(lineups) || !lineups.length) {
+          solveLineups.innerHTML = "<i>No sample lineups.</i>";
+          if (solveResults) solveResults.style.display = "block";
+          return;
+        }
+
+        const html = lineups.map((lineup) => {
+          const meta = `Lineup ${escapeHtml(lineup.index)} · Salary ${escapeHtml(lineup.salary)} · Projection ${escapeHtml(lineup.projection)}`;
+          const rows = (lineup.players || []).map((player) => {
+            const positions = Array.isArray(player.positions) ? player.positions.join("/") : player.positions;
+            return `<tr>` +
+              `<td>${escapeHtml(player.lineup_position)}</td>` +
+              `<td>${escapeHtml(player.name)}</td>` +
+              `<td>${escapeHtml(positions)}</td>` +
+              `<td>${escapeHtml(player.team)}</td>` +
+              `<td style="text-align:right">${escapeHtml(player.salary)}</td>` +
+              `<td style="text-align:right">${escapeHtml(player.projection)}</td>` +
+              `<td>${player.locked ? "✅" : ""}</td>` +
+            `</tr>`;
+          }).join("");
+          const table = `<table><thead><tr>` +
+            `<th>Slot</th><th>Name</th><th>Pos</th><th>Team</th><th>Salary</th><th>Proj</th><th>Lock</th>` +
+            `</tr></thead><tbody>${rows}</tbody></table>`;
+          return `<div class="lineup-card"><div class="lineup-meta">${meta}</div>${table}</div>`;
+        }).join("");
+
+        solveLineups.innerHTML = html;
+        if (solveResults) solveResults.style.display = "block";
+      }
+
+      btnSolve?.addEventListener("click", async () => {
+        if (!lastJobId) {
+          alert("No job available. Run Optimize first.");
+          return;
+        }
+        const requested = parseInt(solveCount?.value ?? "20", 10) || 20;
+        const payload = {
+          job_id: lastJobId,
+          num_lineups: requested,
+          site: site.value,
+          sport: sport.value,
+          solver: solver.value
+        };
+
+        if (solveStatus) solveStatus.textContent = "Solving...";
+        if (solveWarnings) solveWarnings.textContent = "";
+        if (solveLineups) solveLineups.innerHTML = "";
+        if (solveResults) solveResults.style.display = "none";
+        btnSolve.disabled = true;
+        try {
+          const resp = await fetch(`${API}/solve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const js = await resp.json().catch(() => ({ ok: false, error: "Invalid JSON response" }));
+          if (!resp.ok || !js.ok) {
+            const message = js?.error || `Solve failed (${resp.status})`;
+            resetSolveUI();
+            if (solveStatus) solveStatus.textContent = message;
+            if (js?.diagnostics) {
+              console.warn("Solve diagnostics", js.diagnostics);
+              const issues = Array.isArray(js.diagnostics.issues) ? js.diagnostics.issues : [];
+              if (issues.length && solveWarnings) {
+                solveWarnings.textContent = `Issues: ${issues.join("; ")}`;
+              }
+            }
+            if (message) alert(message);
+            return;
+          }
+          const summaryBits = [];
+          summaryBits.push(`Generated ${js.generated} lineups`);
+          if (js.requested && js.requested !== js.generated) {
+            summaryBits.push(`requested ${js.requested}`);
+          }
+          if (js.lineups_csv) {
+            summaryBits.push(`saved to ${js.lineups_csv}`);
+          }
+          if (js.stats) {
+            const eligible = js.stats.eligible ?? 0;
+            const total = js.stats.total_rows ?? 0;
+            summaryBits.push(`eligible players ${eligible}/${total}`);
+          }
+          if (solveStatus) solveStatus.textContent = summaryBits.join(" • ");
+          if (Array.isArray(js.warnings) && js.warnings.length && solveWarnings) {
+            solveWarnings.textContent = `Warnings: ${js.warnings.join("; ")}`;
+          }
+          renderLineupPreview(js.lineups || []);
+        } catch (err) {
+          const message = err?.message || "Solve failed";
+          if (solveStatus) solveStatus.textContent = message;
+          alert(message);
+        } finally {
+          btnSolve.disabled = false;
+        }
+      });
+
+      function readSettings() {
+        return {
+          site: site.value,
+          sport: sport.value,
+          solver: solver.value,
+          pool_size: parseInt(poolSize.value, 10) || 150,
+          params: {}
+        };
+      }
+
+      async function postForHeaders(file, settings) {
+        const fd = new FormData();
+        fd.append("settings", JSON.stringify(settings));
+        fd.append("csv", file);
+        const resp = await fetch(`${API}/optimize`, { method: "POST", body: fd });
+        if (!resp.ok) throw new Error(`Header load failed: ${resp.status}`);
+        return resp.json();
+      }
+
+      function guessHeader(key, headers) {
+        const wants = {
+          player_id: ["id","player id","fd_id","b_id"],
+          name: ["name","nickname","player"],
+          team: ["team","tm"],
+          position: ["position","pos","roster position"],
+          salary: ["salary","sal","cost"],
+          projection: ["proj","projection","ppg_projection","fpts","points"]
+        }[key] || [key];
+        const lower = headers.map((h) => [h, h.toLowerCase()]);
+        for (const w of wants) {
+          const hit = lower.find(([h, l]) => l.includes(w));
+          if (hit) return hit[0];
+        }
+        return "";
+      }
+
+      function renderMappingForm(headers) {
+        mappingGrid.innerHTML = "";
+        const makeRow = (label, key, required) => {
+          const wrap = document.createElement("div");
+          wrap.style.margin = "6px 0";
+          const lab = document.createElement("label");
+          lab.textContent = `${label}${required ? " *" : ""}: `;
+          const sel = document.createElement("select");
+          sel.dataset.key = key;
+
+          const empty = document.createElement("option");
+          empty.value = "";
+          empty.textContent = required ? "-- choose --" : "(not present)";
+          sel.appendChild(empty);
+
+          headers.forEach((h) => {
+            const opt = document.createElement("option");
+            opt.value = h;
+            opt.textContent = h;
+            sel.appendChild(opt);
+          });
+
+          if (required) {
+            const guessed = guessHeader(key, headers);
+            if (guessed) sel.value = guessed;
+          }
+
+          wrap.appendChild(lab);
+          wrap.appendChild(sel);
+          mappingGrid.appendChild(wrap);
+        };
+        REQUIRED_KEYS.forEach((key) => makeRow(key, key, true));
+        OPTIONAL_KEYS.forEach((key) => makeRow(key, key, false));
+      }
+
+      btnLoadHeaders?.addEventListener("click", async () => {
+        const file = csvFile.files[0];
+        if (!file) {
+          alert("Pick a CSV first");
+          return;
+        }
+        try {
+          const js = await postForHeaders(file, readSettings());
+          const headers = js?.csv_summary?.headers || [];
+          if (!headers.length) {
+            alert("No headers detected.");
+            return;
+          }
+          renderMappingForm(headers);
+          mappingForm.style.display = "block";
+          btnSaveTpl.disabled = false;
+          btnLoadTpl.disabled = false;
+          outOptimize.textContent = JSON.stringify(js.csv_summary, null, 2);
+          if (optimizeDetails) {
+            optimizeDetails.open = false;
+          }
+        } catch (err) {
+          alert(err?.message || "Header load failed");
+        }
+      });
+
+      btnOptimize?.addEventListener("click", async () => {
+        const file = csvFile.files[0];
+        if (!file) {
+          alert("Pick a CSV first");
+          return;
+        }
+        const selects = mappingGrid.querySelectorAll("select");
+        const mapping = {};
+        for (const sel of selects) {
+          const key = sel.dataset.key;
+          if (REQUIRED_KEYS.includes(key) && !sel.value) {
+            alert(`Select a column for ${key}`);
+            return;
+          }
+          if (sel.value) {
+            mapping[key] = sel.value;
+          }
+        }
+        const fd = new FormData();
+        fd.append("settings", JSON.stringify(readSettings()));
+        fd.append("csv", file);
+        fd.append("mapping", JSON.stringify(mapping));
+        const resp = await fetch(`${API}/optimize`, { method: "POST", body: fd });
+        const json = await resp.json().catch(() => ({ error: "non-JSON" }));
+        printOptimize(json);
+      });
+
+      const tplKey = () => `optimizer_mapping_${site.value}_${sport.value}`;
+
+      btnSaveTpl?.addEventListener("click", () => {
+        const selects = mappingGrid.querySelectorAll("select");
+        const mapping = {};
+        for (const sel of selects) {
+          if (sel.value) {
+            mapping[sel.dataset.key] = sel.value;
+          }
+        }
+        localStorage.setItem(tplKey(), JSON.stringify(mapping));
+        alert("Template saved.");
+      });
+
+      btnLoadTpl?.addEventListener("click", () => {
+        const raw = localStorage.getItem(tplKey());
+        if (!raw) {
+          alert("No template for this Site/Sport.");
+          return;
+        }
+        const mapping = JSON.parse(raw);
+        mappingGrid.querySelectorAll("select").forEach((sel) => {
+          if (mapping[sel.dataset.key]) {
+            sel.value = mapping[sel.dataset.key];
+          }
+        });
+        alert("Template loaded.");
+      });
+
+      const THEME_STORAGE_KEY = "dfs_optimizer_theme";
+      let currentTheme = "light";
+
+      function applyTheme(theme) {
+        const normalized = theme === "dark" ? "dark" : "light";
+        currentTheme = normalized;
+        document.body.classList.toggle("dark-mode", normalized === "dark");
+        if (themeToggle) {
+          themeToggle.textContent = normalized === "dark" ? "Switch to light mode" : "Switch to dark mode";
+          themeToggle.setAttribute("aria-pressed", normalized === "dark" ? "true" : "false");
+        }
+        try {
+          localStorage.setItem(THEME_STORAGE_KEY, normalized);
+        } catch (err) {
+          console.warn("Theme preference not persisted", err);
+        }
+      }
+
+      function initTheme() {
+        let stored = null;
+        try {
+          stored = localStorage.getItem(THEME_STORAGE_KEY);
+        } catch (err) {
+          stored = null;
+        }
+        if (stored === "dark" || stored === "light") {
+          currentTheme = stored;
+        } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+          currentTheme = "dark";
+        }
+        applyTheme(currentTheme);
+      }
+
+      initTheme();
+
+      themeToggle?.addEventListener("click", () => {
+        applyTheme(currentTheme === "dark" ? "light" : "dark");
+      });
     });
-    alert("Template loaded.");
-  };
-});
-</script>
+  </script>
+</body>
+</html>
