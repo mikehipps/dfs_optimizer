@@ -199,3 +199,116 @@ async def optimize(
         "normalized": normalized,
         "job": job,  # NEW: paths + id (None if no mapping or no players)
     }
+
+
+def _csv_bool_to_str(v: Any) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    s = str(v).strip().lower()
+    if s in ("1", "true", "t", "yes", "y"):
+        return "true"
+    if s in ("0", "false", "f", "no", "n"):
+        return "false"
+    return "false"
+
+
+def _csv_float_or_empty(v: Any) -> str:
+    if v is None:
+        return ""
+    try:
+        return str(float(v))
+    except Exception:
+        return ""
+
+
+@app.get("/jobs/{job_id}/pool")
+def get_pool(job_id: str):
+    job_dir = DATA_DIR / "jobs" / job_id
+    pool_csv = job_dir / "pool_input.csv"
+    if not pool_csv.exists():
+        return {"players": [], "count": 0, "error": "pool_input.csv not found"}
+
+    with pool_csv.open("r", encoding="utf-8", newline="") as f:
+        reader = csvmod.DictReader(f)
+        rows = list(reader)
+
+    return {"players": rows, "count": len(rows)}
+
+
+@app.post("/jobs/{job_id}/pool")
+async def update_pool(job_id: str, body: Dict[str, Any]):
+    job_dir = DATA_DIR / "jobs" / job_id
+    pool_csv = job_dir / "pool_input.csv"
+    if not pool_csv.exists():
+        return {"ok": False, "error": "pool_input.csv not found"}
+
+    with pool_csv.open("r", encoding="utf-8", newline="") as f:
+        reader = csvmod.DictReader(f)
+        current_rows = list(reader)
+        headers = reader.fieldnames or []
+
+    default_cols = ["active", "lock", "exclude", "max_exposure", "min_exposure"]
+    for col in default_cols:
+        if col not in headers:
+            headers.append(col)
+            for row in current_rows:
+                if col == "active":
+                    row[col] = "true"
+                elif col in ("lock", "exclude"):
+                    row[col] = "false"
+                else:
+                    row[col] = ""
+
+    index = {row.get("player_id"): i for i, row in enumerate(current_rows)}
+
+    updates = body.get("players") or []
+    changed = 0
+    for update in updates:
+        player_id = update.get("player_id")
+        if player_id is None or player_id not in index:
+            continue
+
+        row = current_rows[index[player_id]]
+        row_changed = False
+
+        for key, value in update.items():
+            if key == "player_id":
+                continue
+
+            if key not in headers:
+                headers.append(key)
+                for existing_row in current_rows:
+                    existing_row.setdefault(key, "")
+
+            if key == "salary":
+                try:
+                    row[key] = str(int(float(value)))
+                    row_changed = True
+                except Exception:
+                    continue
+            elif key == "projection":
+                try:
+                    row[key] = str(float(value))
+                    row_changed = True
+                except Exception:
+                    continue
+            elif key in ("active", "lock", "exclude"):
+                row[key] = _csv_bool_to_str(value)
+                row_changed = True
+            elif key in ("max_exposure", "min_exposure"):
+                row[key] = _csv_float_or_empty(value)
+                row_changed = True
+            else:
+                row[key] = "" if value is None else str(value)
+                row_changed = True
+
+        if row_changed:
+            changed += 1
+
+    with pool_csv.open("w", encoding="utf-8", newline="") as f:
+        writer = csvmod.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        for row in current_rows:
+            writer.writerow(row)
+
+    return {"ok": True, "changed": changed, "count": len(current_rows)}
