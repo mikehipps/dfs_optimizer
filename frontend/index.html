@@ -26,35 +26,43 @@
     <pre id="outHealth"></pre>
   </fieldset>
 
-  <fieldset>
-    <legend>Upload CSV & Optimize (echo test)</legend>
+<fieldset>
+  <legend>Upload CSV & Header Mapping</legend>
+  <div class="row">
+    <label>CSV: <input type="file" id="csvFile" accept=".csv" /></label>
+    <label>Site:
+      <select id="site">
+        <option>FANDUEL</option><option>DRAFTKINGS</option>
+      </select>
+    </label>
+    <label>Sport:
+      <select id="sport">
+        <option>NFL</option><option>NBA</option><option>MLB</option><option>NHL</option>
+      </select>
+    </label>
+    <label>Solver:
+      <select id="solver"><option>mip</option><option>pulp</option></select>
+    </label>
+    <label>Pool size: <input type="number" id="poolSize" value="150" min="1" /></label>
+  </div>
+
+  <div class="row">
+    <button id="btnLoadHeaders">Load headers</button>
+    <button id="btnSaveTpl" disabled>Save mapping template</button>
+    <button id="btnLoadTpl" disabled>Load mapping template</button>
+  </div>
+
+  <div id="mappingForm" style="display:none; margin-top:8px;">
+    <h3>Map CSV columns</h3>
+    <div id="mappingGrid"></div>
     <div class="row">
-      <label>CSV: <input type="file" id="csvFile" accept=".csv" /></label>
-      <label>Site:
-        <select id="site">
-          <option>FANDUEL</option>
-          <option>DRAFTKINGS</option>
-        </select>
-      </label>
-      <label>Sport:
-        <select id="sport">
-          <option>NFL</option>
-          <option>NBA</option>
-          <option>MLB</option>
-          <option>NHL</option>
-        </select>
-      </label>
-      <label>Solver:
-        <select id="solver">
-          <option>mip</option>
-          <option>pulp</option>
-        </select>
-      </label>
-      <label>Pool size: <input type="number" id="poolSize" value="150" min="1" /></label>
+      <button id="btnOptimize">Build mapping & Optimize</button>
     </div>
-    <button id="btnSend">POST /optimize</button>
-    <pre id="outOptimize"></pre>
-  </fieldset>
+  </div>
+
+  <pre id="outOptimize"></pre>
+</fieldset>
+
 
   <script>
     const API = "/api"; // adjust if reverse-proxy later
@@ -82,5 +90,150 @@
       document.getElementById("outOptimize").textContent = JSON.stringify(json, null, 2);
     };
   </script>
-</body>
-</html>
+ <script>
+document.addEventListener("DOMContentLoaded", () => {
+  const API = "/api";
+
+  // grab all elements explicitly
+  const csvFile     = document.getElementById("csvFile");
+  const site        = document.getElementById("site");
+  const sport       = document.getElementById("sport");
+  const solver      = document.getElementById("solver");
+  const poolSize    = document.getElementById("poolSize");
+
+  const btnLoadHeaders = document.getElementById("btnLoadHeaders");
+  const btnOptimize    = document.getElementById("btnOptimize");
+  const btnSaveTpl     = document.getElementById("btnSaveTpl");
+  const btnLoadTpl     = document.getElementById("btnLoadTpl");
+
+  const mappingForm = document.getElementById("mappingForm");
+  const mappingGrid = document.getElementById("mappingGrid");
+  const outOptimize = document.getElementById("outOptimize");
+
+  const REQUIRED_KEYS = ["player_id","name","team","position","salary","projection"];
+  const OPTIONAL_KEYS = [
+    "max_exposure","min_exposure","projected_ownership",
+    "min_deviation","max_deviation","projection_floor","projection_ceil",
+    "confirmed_starter","progressive_scale"
+  ];
+
+  function readSettings(){
+    return {
+      site: site.value,
+      sport: sport.value,
+      solver: solver.value,
+      pool_size: parseInt(poolSize.value,10) || 150,
+      params: {}
+    };
+  }
+
+  async function postForHeaders(file, settings){
+    const fd = new FormData();
+    fd.append("settings", JSON.stringify(settings));
+    fd.append("csv", file); // no mapping
+    const r = await fetch(`${API}/optimize`, { method:"POST", body:fd });
+    if(!r.ok) throw new Error(`Header load failed: ${r.status}`);
+    return r.json();
+  }
+
+  function guessHeader(key, headers){
+    const wants = {
+      player_id:["id","player id","fd_id","b_id"],
+      name:["name","nickname","player"],
+      team:["team","tm"],
+      position:["position","pos","roster position"],
+      salary:["salary","sal","cost"],
+      projection:["proj","projection","ppg_projection","fpts","points"]
+    }[key] || [key];
+    const lower = headers.map(h=>[h,h.toLowerCase()]);
+    for(const w of wants){
+      const hit = lower.find(([h,l])=>l.includes(w));
+      if(hit) return hit[0];
+    }
+    return "";
+  }
+
+  function renderMappingForm(headers){
+    mappingGrid.innerHTML = "";
+    const makeRow = (label,key,required)=>{
+      const wrap = document.createElement("div"); wrap.style.margin="6px 0";
+      const lab = document.createElement("label"); lab.textContent = `${label}${required?" *":""}: `;
+      const sel = document.createElement("select"); sel.dataset.key = key;
+
+      const empty = document.createElement("option");
+      empty.value = ""; empty.textContent = required ? "-- choose --" : "(not present)";
+      sel.appendChild(empty);
+
+      headers.forEach(h=>{
+        const o=document.createElement("option"); o.value=h; o.textContent=h; sel.appendChild(o);
+      });
+
+      if(required){
+        const g=guessHeader(key, headers);
+        if(g) sel.value=g;
+      }
+
+      wrap.appendChild(lab);
+      wrap.appendChild(sel);
+      mappingGrid.appendChild(wrap);
+    };
+    REQUIRED_KEYS.forEach(k=>makeRow(k,k,true));
+    OPTIONAL_KEYS.forEach(k=>makeRow(k,k,false));
+  }
+
+  btnLoadHeaders.onclick = async ()=>{
+    const f = csvFile.files[0]; if(!f){ alert("Pick a CSV first"); return; }
+    try{
+      const js = await postForHeaders(f, readSettings());
+      const headers = js?.csv_summary?.headers || [];
+      if(!headers.length){ alert("No headers detected."); return; }
+      renderMappingForm(headers);
+      mappingForm.style.display = "block";
+      btnSaveTpl.disabled = false;
+      btnLoadTpl.disabled = false;
+      outOptimize.textContent = JSON.stringify(js.csv_summary, null, 2);
+    }catch(e){ alert(e.message); }
+  };
+
+  btnOptimize.onclick = async ()=>{
+    const f = csvFile.files[0]; if(!f){ alert("Pick a CSV first"); return; }
+    const selects = mappingGrid.querySelectorAll("select");
+    const mapping = {};
+    for(const sel of selects){
+      const key = sel.dataset.key;
+      if(REQUIRED_KEYS.includes(key) && !sel.value){
+        alert(`Select a column for ${key}`); return;
+      }
+      if(sel.value) mapping[key] = sel.value;
+    }
+    const fd = new FormData();
+    fd.append("settings", JSON.stringify(readSettings()));
+    fd.append("csv", f);
+    fd.append("mapping", JSON.stringify(mapping));
+    const r = await fetch(`${API}/optimize`, { method:"POST", body:fd });
+    const js = await r.json().catch(()=>({error:"non-JSON"}));
+    outOptimize.textContent = JSON.stringify(js, null, 2);
+  };
+
+  // localStorage templates
+  const tplKey = ()=> `optimizer_mapping_${site.value}_${sport.value}`;
+
+  btnSaveTpl.onclick = ()=>{
+    const selects = mappingGrid.querySelectorAll("select");
+    const mapping = {};
+    for(const sel of selects){ if(sel.value) mapping[sel.dataset.key]=sel.value; }
+    localStorage.setItem(tplKey(), JSON.stringify(mapping));
+    alert("Template saved.");
+  };
+
+  btnLoadTpl.onclick = ()=>{
+    const raw = localStorage.getItem(tplKey());
+    if(!raw){ alert("No template for this Site/Sport."); return; }
+    const mapping = JSON.parse(raw);
+    mappingGrid.querySelectorAll("select").forEach(sel=>{
+      if(mapping[sel.dataset.key]) sel.value = mapping[sel.dataset.key];
+    });
+    alert("Template loaded.");
+  };
+});
+</script>
