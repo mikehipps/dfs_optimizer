@@ -4,7 +4,7 @@ from pydantic import BaseModel, ValidationError
 from typing import Optional, Dict, Any, List, Tuple
 from uuid import uuid4
 from pathlib import Path
-import io, csv, json, os
+import io, csv as csvmod, json, os
 
 DATA_DIR = Path("/app/data")  # added near the top of the file is fine
 
@@ -35,13 +35,13 @@ def _parse_csv(binary: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     buf = io.StringIO(text)
     try:
         sample = text[:4096]
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        dialect = csvmod.Sniffer().sniff(sample, delimiters=",;\t|")
         buf.seek(0)
     except Exception:
         warnings.append("Could not sniff delimiter; defaulted to comma.")
-        dialect = csv.get_dialect("excel")
+        dialect = csvmod.get_dialect("excel")
         buf.seek(0)
-    reader = csv.DictReader(buf, dialect=dialect)
+    reader = csvmod.DictReader(buf, dialect=dialect)
     headers = reader.fieldnames or []
     rows = [row for row in reader]
     summary = {
@@ -130,10 +130,10 @@ def _normalize_rows(rows: List[Dict[str, Any]], mapping: Dict[str, str]) -> Dict
 @app.post("/optimize")
 async def optimize(
     settings: str = Form(...),
-    csv: UploadFile = File(...),
+    file: UploadFile = File(...),
     mapping: Optional[str] = Form(None),
 ):
-    raw = await csv.read()
+    raw = await file.read()
 
     try:
         settings_json = json.loads(settings)
@@ -167,7 +167,7 @@ async def optimize(
 
                 out_csv = job_dir / "pool_input.csv"
                 with out_csv.open("w", newline="", encoding="utf-8") as f:
-                    w = csv.DictWriter(f, fieldnames=headers)
+                    w = csvmod.DictWriter(f, fieldnames=headers)
                     w.writeheader()
                     for p in players:
                         w.writerow(p)
