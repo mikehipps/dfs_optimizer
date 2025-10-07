@@ -8,6 +8,7 @@ services:
       - "8001:8000"   # <- change to 8001 on the HOST
     volumes:
       - ./backend/app:/app/app:ro   # mount your source into the container
+      - ./data:/app/data                  # <-- add this for job outputs
     restart: unless-stopped
 
   frontend:
