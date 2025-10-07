@@ -39,3 +39,7 @@
 - Backend writes to `/app/data` (host `./data`)
 - Keep `DATA_DIR = Path("/app/data")`
 - For Linux perms: set docker-compose backend `user: "${UID}:${GID}"` and export env before `compose up`
+
+
+## Working as of 10/07 at 5:48 - Merge pull request #5 from mikehipps/codex/add-editable-player-pool-functionality-wjowcs
+
